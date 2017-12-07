@@ -62,7 +62,7 @@ class Model(object):
 
         f_out = utils.create_write_file(self.output_file)
         for label, train_instances in zip(predict_label, train_instances):
-            print('{:.2f}\t#\t{}'.format(label, train_instances.get_instance_string()), file=f_out)
+            print('{:d}\t#\t{}'.format(label, train_instances.get_instance_string()), file=f_out)
 
         return self.classifier
 
@@ -80,7 +80,7 @@ class Model(object):
 
         f_out = utils.create_write_file(self.output_file)
         for label, dev_instance in zip(predict_label, dev_instances):
-            print('{:.2f}\t#\t{}'.format(label, dev_instance.get_instance_string()), file=f_out)
+            print('{:d}\t#\t{}'.format(label, dev_instance.get_instance_string()), file=f_out)
 
         return predict_label
 
@@ -151,7 +151,7 @@ class Model(object):
 
         for idx, feature_string in enumerate(merged_feature_string_list):
             train_instance = train_instances[idx]
-            print(str(train_instance.get_score()), feature_string, file=f_feature)
+            print(str(train_instance.get_label()), feature_string, file=f_feature)
 
         return merged_feature_string_list, merged_feature_dimension, len(merged_feature_string_list)
 
@@ -217,5 +217,5 @@ class Model(object):
 
         f_out = utils.create_write_file(self.output_file)
         for label, train_instance in zip(preds, data_instances):
-            print('{:.2f}\t#\t{}'.format(
+            print('{:d}\t#\t{}'.format(
                 label, train_instance[1].get_instance_string()), file=f_out)

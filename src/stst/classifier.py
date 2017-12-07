@@ -12,6 +12,7 @@ from sklearn import svm
 from sklearn.cross_validation import KFold
 import xgboost as xgb
 
+
 from stst import utils
 
 __all__ = [
@@ -199,6 +200,7 @@ class LIB_LINEAR_LR(Strategy):
          # -b probability_estimates: whether to output probability estimates, 0 or 1     (default 0); currently for logistic regression only
 
          # -n nr_thread
+
         print("==> Train the model ...")
         cmd = self.LIB_LINEAR_PATH + \
               "/train -n 8 -s 0 -c 1 %s %s > /dev/null" % (train_file_path, model_path)
@@ -208,12 +210,13 @@ class LIB_LINEAR_LR(Strategy):
         return model_path
 
     def test_model(self, test_file_path, model_path, result_file_path):
+
         print("==> Test the model ...")
         cmd = self.LIB_LINEAR_PATH + "/predict " + test_file_path + " " + model_path + " " + result_file_path
         # print(cmd)
         os.system(cmd)
 
-        cmd = self.LIB_LINEAR_PATH + "/predict -b 1 " + test_file_path + " " + model_path + " " + result_file_path + '.prob'
+        cmd = self.LIB_LINEAR_PATH + "/predict -b 1 " + test_file_path + " " + model_path + " " + result_file_path + ".prob"
         os.system(cmd)
 
         y_pred = open(result_file_path, 'r').readlines()

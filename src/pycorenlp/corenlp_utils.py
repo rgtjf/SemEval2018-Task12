@@ -7,7 +7,7 @@ from pycorenlp.corenlp import StanfordCoreNLP
 
 
 class StanfordNLP:
-    def __init__(self, server_url='http://precision:9000'):
+    def __init__(self, server_url='http://localhost:9000'):
         self.server = StanfordCoreNLP(server_url)
 
     def parse(self, text):
@@ -24,6 +24,9 @@ class StanfordNLP:
 
 if __name__ == '__main__':
 
-    nlp = StanfordNLP()
-    parsetext = nlp.parse(u'I love China.')
+    nlp = StanfordNLP('http://precision:9000')
+    text = '♡'
+    print(text)
+    parsetext = nlp.parse(u"Happy December 1st ♡ | #christmas #christmastree #pretty @ The Distillery Historic District")
     print(json.dumps(parsetext, indent=2))
+    print((parsetext['sentences'][0]['tokens'][3]['word']))

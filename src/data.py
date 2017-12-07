@@ -8,8 +8,16 @@
 
 from __future__ import print_function
 
-import stst
+import traceback
+import json
+import pyprind
+import re
 import codecs
+
+import stst
+from pycorenlp import corenlp_utils
+from stst import utils
+from stst.dict_utils import DictLoader
 
 
 class Example(stst.Example):
@@ -50,11 +58,21 @@ class Example(stst.Example):
     def get_info(self):
         return self.info
 
+    def get_id(self):
+        return self.id
+
     def get_instance_string(self):
         instance_string = "{}\t{}\t{}\t{}\t{}".format(self.label,
                                                       ' '.join(self.warrant0), ' '.join(self.warrant1),
                                                       ' '.join(self.claim), ' '.join(self.reason))
         return instance_string
+
+    def get_six(self, return_str=True):
+        if return_str:
+            return ' '.join(self.warrant0), ' '.join(self.warrant1), ' '.join(self.reason), \
+                    ' '.join(self.claim), ' '.join(self.title), ' '.join(self.info)
+        else:
+            return self.warrant0, self.warrant1, self.reason, self.claim, self.title, self.info
 
     @staticmethod
     def load_data(file_path):
@@ -79,7 +97,157 @@ class Example(stst.Example):
         return examples
 
 
+class ParseExample():
+    """ Parse Example """
+
+    def __init__(self, example_json):
+        self.id, self.label, self._warrant0,  self.warrant0, self._warrant1, self.warrant1, \
+            self._reason, self.reason,  self._claim, self.claim, self._title, self.title, \
+            self._info, self.info = example_json
+
+        self.label = int(self.label)
+
+    def get_words(self, parse_sent, **kwargs):
+        """
+        Given parse_sent, return the object
+        Args:
+            kwargs: type=word/lemma/pos/ner, stopwords=True/False, lower=True/False
+        Returns:
+            sent: List / Str
+        """
+        sent = []
+
+        if 'stopwords' in kwargs and kwargs['stopwords'] is True:
+            stopwords_file = 'resources/dict_stopwords.txt'
+            tokens = parse_sent["sentences"][0]["tokens"]
+            sent = [token[kwargs["type"]] for token in tokens if
+                    token['word'].lower() not in DictLoader().load_dict('stopwords', stopwords_file)]
+
+            if len(sent) == 0:
+                sent = [token[kwargs["type"]] for token in tokens]
+
+        else:
+            tokens = parse_sent["sentences"][0]["tokens"]
+            sent = [token[kwargs["type"]] for token in tokens]
+
+        if 'lower' in kwargs and kwargs['lower'] is True:
+            sent = [w.lower() for w in sent]
+
+        if 'return_str' in kwargs and kwargs['return_str'] is True:
+            sent = ' '.join(sent)
+        return sent
+
+    def get_label(self):
+        return self.label
+
+    def get_claim(self, **kwargs):
+        return self.get_words(self.claim, **kwargs)
+
+    def get_reason(self, **kwargs):
+        return self.get_words(self.reason, **kwargs)
+
+    def get_warrant0(self, **kwargs):
+        return self.get_words(self.warrant0, **kwargs)
+
+    def get_warrant1(self, **kwargs):
+        return self.get_words(self.warrant1, **kwargs)
+
+    def get_title(self, **kwargs):
+        return self.get_words(self.title, **kwargs)
+
+    def get_info(self, **kwargs):
+        return self.get_words(self.info, **kwargs)
+
+    def get_id(self):
+        return self.id
+
+    def get_sent(self, name, **kwargs):
+        if name == 'warrant0':
+            sent = self.get_warrant0(**kwargs)
+        elif name == 'warrant1':
+            sent = self.get_warrant1(**kwargs)
+        elif name == 'reason':
+            sent = self.get_reason(**kwargs)
+        elif name == 'claim':
+            sent = self.get_claim(**kwargs)
+        elif name == 'title':
+            sent = self.get_title(**kwargs)
+        elif name == 'info':
+            sent = self.get_info(**kwargs)
+        else:
+            raise NotImplementedError
+        return sent
+
+    def get_instance_string(self):
+        instance_string = "{}\t{}\t{}\t{}\t{}".format(self.label,
+                                                      ' '.join(self.warrant0), ' '.join(self.warrant1),
+                                                      ' '.join(self.claim), ' '.join(self.reason))
+        return instance_string
+
+    def get_six(self, return_str=True, **kwargs):
+        warrant0 = self.get_warrant0(**kwargs)
+        warrant1 = self.get_warrant1(**kwargs)
+        reason = self.get_reason(**kwargs)
+        claim = self.get_claim(**kwargs)
+        title = self.get_title(**kwargs)
+        info = self.get_info(**kwargs)
+
+        if return_str:
+            return ' '.join(warrant0), ' '.join(warrant1), ' '.join(reason), \
+                    ' '.join(claim), ' '.join(title), ' '.join(info)
+        else:
+            return warrant0, warrant1, reason, claim, title, info
+
+    @staticmethod
+    def load_data(file_path):
+        """ return list of examples """
+        examples = []
+        with codecs.open(file_path, encoding='utf8') as f:
+            #id	warrant0	warrant1	correctLabelW0orW1	reason	claim	debateTitle	debateInfo
+            headline = f.readline()
+            for line in f:
+                example_dict = {}
+                items = line.strip().split('\t')
+                example_dict['id'] = items[0]
+                example_dict['warrant0'] = items[1]
+                example_dict['warrant1'] = items[2]
+                example_dict['label'] = items[3]
+                example_dict['reason'] = items[4]
+                example_dict['claim'] = items[5]
+                example_dict['title'] = items[6]
+                example_dict['info'] = items[7]
+                example = Example(example_dict)
+                examples.append(example)
+        return examples
+
+
+def preprocess(sent):
+    """
+    preprocess for one sent
+    Args:
+        sent: str
+    Returns:
+        sent: clean_sent, str
+    """
+    r1 = re.compile(r'\<([^ ]+)\>')
+    r2 = re.compile(r'\$US(\d)')
+    sent = sent.replace(u'’', "'")
+    sent = sent.replace(u'``', '"')
+    sent = sent.replace(u"''", '"')
+    sent = sent.replace(u"´", "'")
+    sent = sent.replace(u"—", ' ')
+    sent = sent.replace(u"–", ' ')
+    sent = sent.replace(u"-", " ")
+    sent = sent.replace(u"/", " ")
+    sent = r1.sub(r'\1', sent)
+    sent = r2.sub(r'$\1', sent)
+    return sent
+
+
 def calc_avg_tokens(train_instances):
+    """
+    warrant0 / warrant1 / reason / claim / title / info
+    """
     warrant0 = []
     warrant1 = []
     reason = []
@@ -105,131 +273,108 @@ def calc_avg_tokens(train_instances):
 def load_parse_data(file_path, init=False):
     """
     Load data after Parse, like POS, NER, etc.
-    Value: List of Example:class
-    Parameter:
+    Args:
+        file_path:
+        init: false, load from file;
+            else init from corenlp
+
+    Returns:
+        parse_data: List of Example:class
     """
 
     ''' Pre-Define Write File '''
-    parse_train_file = file_path.replace('data', 'parse')
-    parse_word_file = file_path.replace('data', 'word')
-    parse_lemma_file = file_path.replace('data', 'lemma')
-    parse_pos_file = file_path.replace('data', 'pos')
-    parse_ner_file = file_path.replace('data', 'ner')
-    parse_stopwords_lemma_file = file_path.replace('data', 'stopwords/lemma')
+    parse_train_file = file_path.replace('data', 'generate/parse')
+    parse_word_file = file_path.replace('data', 'generate/word')
+    parse_lemma_file = file_path.replace('data', 'generate/lemma')
+    parse_stopwords_lemma_file = file_path.replace('data', 'generate/stopwords/lemma')
 
-    if flag:
+    if init:
+
+        nlp = corenlp_utils.StanfordNLP(server_url='http://precision:9000')
 
         print(file_path)
-        print(gs_file)
-
         ''' Parse Data '''
-        if 'sts' in file_path:
-            data = load_STS(file_path)
-        elif 'sick' in file_path or sick:
-            data = load_SICK(file_path)
-        else:
-            data = load_data(file_path, gs_file)
+        examples = Example.load_data(file_path)
 
         print('*' * 50)
-        print("Parse Data, train_file=%s, gs_file=%s, n_train=%d\n" % (file_path, gs_file, len(data)))
+        print("Parse Data, file_path=%s, n_line=%d\n" % (file_path, len(examples)))
 
         # idx = 0
         parse_data = []
-        process_bar = pyprind.ProgPercent(len(data))
-        for (sa, sb, score) in data:
+        process_bar = pyprind.ProgPercent(len(examples))
+        for example in examples:
             process_bar.update()
-            # idx += 1
-            # if idx > 20:
-            #     break
+
+            id = example.get_id()
+            label = example.get_label()
+            parse_lst = [id, label]
             try:
-                parse_sa = nlp.parse(sa)
-                parse_sb = nlp.parse(sb)
+                # warrant0 / warrant1 / reason / claim / title / info
+                example_lst = example.get_six()
+
+                for sent in example_lst:
+                    parse_sent = nlp.parse(sent)
+                    parse_lst.append(sent)
+                    parse_lst.append(parse_sent)
+
             except Exception:
-                print(sa, sb)
+                print(example.get_id())
                 traceback.print_exc()
-                #parse_sa = sa
-                #parse_sb = sb
-            parse_data.append((parse_sa, parse_sb, score))
+                parse_lst = ("id label warrant0 warrant1 reason claim title info".split())
+
+            parse_data.append(parse_lst)
 
         ''' Write Data to File '''
-
         f_parse = utils.create_write_file(parse_train_file)
         f_word = utils.create_write_file(parse_word_file)
-        f_lemma = utils.create_write_file(parse_lemma_file)
-        f_pos = utils.create_write_file(parse_pos_file)
-        f_ner = utils.create_write_file(parse_ner_file)
+        f_lemma = utils.create_write_file(parse_lemma_file)  # id warrant0 warrant1 label reason claim title info
         f_stopwords_lemma = utils.create_write_file(parse_stopwords_lemma_file)
 
-        for parse_instance in parse_data:
-            line = json.dumps(parse_instance)
+        for parse_example in parse_data:
+            parse_sent = json.dumps(parse_example)  # list -> str
+            parse_example = ParseExample(parse_example)  # list -> class
 
-            sentpair_instance = SentPair(parse_instance)
+            id = parse_example.get_id()
+            label = parse_example.get_label()
 
-            score = str(sentpair_instance.get_score())
-            sa_word, sb_word = sentpair_instance.get_word(type='word')
-            sa_lemma, sb_lemma = sentpair_instance.get_word(type='lemma')
-            sa_pos, sb_pos = sentpair_instance.get_word(type='pos')
-            sa_ner, sb_ner = sentpair_instance.get_word(type='ner')
+            for word_type, fw in zip(['word', 'lemma'], [f_word, f_lemma]):
 
-            sa_stopwords_lemma, sb_stopwords_lemma = sentpair_instance.get_word(type='lemma', stopwords=True)
+                warrant0 = parse_example.get_warrant0(type=word_type, return_str=True)
+                warrant1 = parse_example.get_warrant1(type=word_type, return_str=True)
+                reason = parse_example.get_reason(type=word_type, return_str=True)
+                claim = parse_example.get_claim(type=word_type, return_str=True)
+                title = parse_example.get_title(type=word_type, return_str=True)
+                info = parse_example.get_info(type=word_type, return_str=True)
+                sent = '%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s' % (id, warrant0, warrant1,
+                                                           label, reason, claim, title, info)
+                print(sent, file=fw)
 
-            s_word = score \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sa_word, sa_word)])  \
-                     + '\t'                                                      \
-                     + ' '.join([w + '/' + p for w, p in zip(sb_word, sb_word)])
+            warrant0 = parse_example.get_warrant0(type='lemma', stopwords=True, return_str=True)
+            warrant1 = parse_example.get_warrant1(type='lemma', stopwords=True, return_str=True)
+            reason = parse_example.get_reason(type='lemma', stopwords=True, return_str=True)
+            claim = parse_example.get_claim(type='lemma', stopwords=True, return_str=True)
+            title = parse_example.get_title(type='lemma', stopwords=True, return_str=True)
+            info = parse_example.get_info(type='lemma', stopwords=True, return_str=True)
+            sent = '%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s' % (id, warrant0, warrant1, label, reason, claim, title, info)
+            print(sent, file=f_stopwords_lemma)
 
-            s_lemma = score \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sa_word, sa_lemma)]) \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sb_word, sb_lemma)])
-
-            s_pos = score \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sa_word, sa_pos)]) \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sb_word, sb_pos)])
-
-            s_ner = score \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sa_word, sa_ner)]) \
-                     + '\t' \
-                     + ' '.join([w + '/' + p for w, p in zip(sb_word, sb_ner)])
-
-            s_stopwords_lemma = score \
-                     + '\t' \
-                     + ' '.join([w for w in sa_stopwords_lemma]) \
-                     + '\t' \
-                     + ' '.join([w for w in sb_stopwords_lemma]) \
-
-            print(line, file=f_parse)
-            print(s_word, file=f_word)
-            print(s_lemma, file=f_lemma)
-            print(s_pos, file=f_pos)
-            print(s_ner, file=f_ner)
-            print(s_stopwords_lemma, file=f_stopwords_lemma)
+            print(parse_sent, file=f_parse)
 
         f_parse.close()
         f_word.close()
         f_lemma.close()
-        f_pos.close()
-        f_ner.close()
         f_stopwords_lemma.close()
 
     ''' Load Data from File '''
-
     print('*' * 50)
-
-
     parse_data = []
     with codecs.open(parse_train_file, 'r', encoding='utf8') as f:
         for line in f:
-            parse_json = json.loads(line)
-            sentpair_instance = SentPair(parse_json)
-            parse_data.append(sentpair_instance)
+            parse_sent = json.loads(line)
+            parse_example = ParseExample(parse_sent)
+            parse_data.append(parse_example)
 
-    print("Load Data, train_file=%s, gs_file=%s, n_train=%d\n" % (file_path, gs_file, len(parse_data)))
+    print("Load Data, file_path=%s  n_line=%d\n" % (file_path, len(parse_data)))
     return parse_data
 
 
@@ -252,6 +397,9 @@ if __name__ == '__main__':
 
     for train_instance in train_instances[:10]:
         print(train_instance.get_instance_string())
+
+    train_instances = load_parse_data(train_swap_file, init=True)
+    # dev_instances = load_parse_data(dev_file, init=True)
 
     # for idx in range(len(train_instances)):
     #     print(idx, end=',')

@@ -1,4 +1,4 @@
-# coding: utf8
+# coding: utf-8
 import json, requests
 import traceback
 import six
@@ -38,7 +38,6 @@ class StanfordCoreNLP:
             try:
                 output = json.loads(output, encoding='utf8', strict=True)
             except Exception:
-                # print(e)
                 try:
                     output = json.loads(output, encoding='utf8', strict=False)
                 except Exception:

@@ -3,7 +3,7 @@ from __future__ import print_function
 
 import json
 import os
-
+import numpy
 import pyprind
 
 from stst import utils, config
@@ -25,6 +25,8 @@ class Feature(object):
         """
         # Need This to help global function
         self.train_file = train_file
+        self.is_training = is_training
+
         # Re-define self.feature_file to prevent self.feature_file change two times
         # (i.e., train and test)
         train_file_name = os.path.basename(train_file)
@@ -98,7 +100,7 @@ class Feature(object):
         ''' write features string to file '''
         for feature, info in zip(features, infos):
             ''' type(feature) is list '''
-            if type(feature) is list:
+            if type(feature) is list or type(feature) == numpy.ndarray:
                 feature_string = Feature._feat_list_to_string(feature)
             elif type(feature) is str:
                 feature_string = feature

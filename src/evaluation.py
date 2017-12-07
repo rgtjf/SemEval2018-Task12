@@ -15,10 +15,11 @@ from confusion_matrix import Alphabet, ConfusionMatrix
 DICT_LABEL_TO_INDEX = {'0': 0, '1'  : 1}
 DICT_INDEX_TO_LABEL = {index:label for label, index in DICT_LABEL_TO_INDEX.items()}
 
+
 def Evaluation(gold_file_path, predict_file_path):
     with open(gold_file_path) as gold_file, open(predict_file_path) as predict_file:
-        gold_list = [line.strip().split('\t')[1] for line in gold_file][1:]
-        predicted_list = [ line.strip().split('\t')[1] for line in predict_file][1:]
+        gold_list = [line.strip().split('\t')[3] for line in gold_file][1:]
+        predicted_list = [ line.strip().split('\t')[0] for line in predict_file][0:]
 
         binary_alphabet = Alphabet()
         for i in range(2):
