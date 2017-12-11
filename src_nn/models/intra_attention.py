@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 import config
 import tf_utils
-from attention_lstm import BasicAttLSTMCell
+from attention_lstm import AttBasicLSTMCell
 
 
 class IntraAttentionModel(object):
@@ -96,8 +96,8 @@ class IntraAttentionModel(object):
         attention_vector_for_W1 = tf.concat([pooling_debate, pooling_reason, pooling_warrant1, pooling_claim], axis=-1)
 
         def AttBiLSTM(attention_vector, input_x, input_x_len, hidden_size, return_sequence=True):
-            cell_fw = BasicAttLSTMCell(attention_vector, num_units=hidden_size)
-            cell_bw = BasicAttLSTMCell(attention_vector, num_units=hidden_size)
+            cell_fw = AttBasicLSTMCell(attention_vector, num_units=hidden_size)
+            cell_bw = AttBasicLSTMCell(attention_vector, num_units=hidden_size)
 
             b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw,
                                                                   cell_bw,

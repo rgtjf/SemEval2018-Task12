@@ -1,7 +1,9 @@
-# coding: utf-8
-import json, requests
+# coding: utf8
+import json
+import requests
 import traceback
 import six
+
 
 class StanfordCoreNLP:
     def __init__(self, server_url):
@@ -38,6 +40,7 @@ class StanfordCoreNLP:
             try:
                 output = json.loads(output, encoding='utf8', strict=True)
             except Exception:
+                # print(e)
                 try:
                     output = json.loads(output, encoding='utf8', strict=False)
                 except Exception:
@@ -45,24 +48,46 @@ class StanfordCoreNLP:
                     pass
         return output
 
-    def tokensregex(self, text, pattern, filter):
-        return self.regex('/tokensregex', text, pattern, filter)
 
-    def semgrex(self, text, pattern, filter):
-        return self.regex('/semgrex', text, pattern, filter)
+class StanfordNLP:
+    def __init__(self, server_url='http://localhost:9000'):
+        self.server = StanfordCoreNLP(server_url)
 
-    def regex(self, endpoint, text, pattern, filter):
-        r = requests.get(
-            self.server_url + endpoint, params={
-                'pattern': pattern,
-                'filter': filter
-            }, data=text)
-        output = r.text
-        try:
-            output = json.loads(r.text)
-        except:
-            pass
+    def parse(self, text):
+        output = self.server.annotate(text, properties={
+            'timeout': '50000',
+            'ssplit.isOneSentence': 'true',
+            'depparse.DependencyParseAnnotator': 'basic',
+            'annotators': 'tokenize,lemma,ssplit,pos,depparse,parse,ner',
+            # 'annotators': 'tokenize,lemma,ssplit,pos,ner',
+            'outputFormat': 'json'
+        })
+
         return output
 
+nlp = StanfordNLP()
 
 
+def stanford_tokenize(s, type='word'):
+    """
+    Tokenization of the given text using StanfordCoreNLP
+    Args:
+        s: text
+        type: 'word'/'lemma'
+    Returns:
+        list of tokens
+    """
+    parsetext = nlp.parse(s)
+    tokens = parsetext['sentences'][0]['tokens']
+    result = []
+    for token in tokens:
+        result.append(token[type])
+    return result
+
+
+if __name__ == '__main__':
+
+    parsetext = nlp.parse(u'I love China.')
+    print(json.dumps(parsetext, indent=2))
+
+    print(stanford_tokenize('She loves China.', type='lemma'))

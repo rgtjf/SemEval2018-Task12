@@ -1,4 +1,15 @@
 # coding: utf8
+"""
+@author rgtjf
+
+==============
+@Update 171211
+ADD rnn_type in BiLSTM function
+
+==============
+@Update 171211
+Version 1.0
+"""
 import tensorflow as tf
 from tensorflow.python.ops import array_ops
 from tensorflow.python.framework import ops
@@ -33,22 +44,62 @@ def bwLSTM(cell_bw, input_x, input_x_len, time_major=False):
     return outputs_bw
 
 
-def BiLSTM(lstm_size, input_x, input_x_len, dropout_keep_rate):
-    cell_fw = tf.contrib.rnn.GRUCell(lstm_size)
-    cell_bw = tf.contrib.rnn.GRUCell(lstm_size)
+def BiLSTM(input_x, input_x_len, hidden_size, num_layers=1, dropout_keep_rate=None, rnn_type='lstm', return_sequence=True):
+    """
+    BiLSTM Layer
+    Args:
+        input_x: [batch, sent_len, emb_size]
+        input_x_len: [batch, ]
+        hidden_size: int
+        num_layers: int
+        dropout_keep_rate: float
+        rnn_type: str, 'lstm'/'gru'
+        return_sequence: True/False
+    Returns:
+        if return_sequence=True:
+            outputs: [batch, sent_len, hidden_size*2]
+        else:
+            output: [batch, hidden_size*2]
+    """
+    # fix a bug
+    # ref: https://stackoverflow.com/questions/44615147/valueerror-trying-to-share-variable-rnn-multi-rnn-cell-cell-0-basic-lstm-cell-k
 
-    cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, output_keep_prob=dropout_keep_rate)
-    cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, output_keep_prob=dropout_keep_rate)
+    def lstm_cell():
+        return tf.contrib.rnn.BasicLSTMCell(hidden_size)
 
-    # b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, input_x,
-    #                                                       sequence_length=input_x_len, dtype=tf.float32)
+    def gru_cell():
+        return tf.contrib.rnn.GRUCell(hidden_size)
 
-    outputs_fw = fwLSTM(cell_fw, input_x, input_x_len)
-    outputs_bw = bwLSTM(cell_bw, input_x, input_x_len)
-    return outputs_fw, outputs_bw
+    if rnn_type == 'lstm':
+        rnn_cell = lstm_cell
+    elif rnn_type == 'gru':
+        rnn_cell = gru_cell
+    else:
+        raise NotImplementedError
+
+    cell_fw = lstm_cell()
+    cell_bw = lstm_cell()
+
+    if num_layers > 1:
+        cell_fw = tf.contrib.rnn.MultiRNNCell([rnn_cell() for _ in range(num_layers)])
+        cell_bw = tf.contrib.rnn.MultiRNNCell([rnn_cell() for _ in range(num_layers)])
+
+    if dropout_keep_rate:
+        cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, output_keep_prob=dropout_keep_rate)
+        cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, output_keep_prob=dropout_keep_rate)
+
+    b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, input_x,
+                                                          sequence_length=input_x_len,
+                                                          dtype=tf.float32)
+    if return_sequence:
+        outputs = tf.concat(b_outputs, axis=2)
+    else:
+        # states: [c, h]
+        outputs = tf.concat([b_states[0][1], b_states[1][1]], axis=-1)
+    return outputs
 
 
-def AvgPooling(input_x, input_len, max_input_len):
+def AvgPooling(input_x, input_len):
     """
     Avg_Pooling
     Args:
@@ -57,23 +108,24 @@ def AvgPooling(input_x, input_len, max_input_len):
     Returns:
         [batch, sent_embedding]
     """
+    max_input_len = tf.shape(input_x)[1]
     mask = tf.sequence_mask(input_len, max_input_len, dtype=tf.float32)
-    norm = mask / (tf.reduce_sum(mask, -1, keep_dims=True) + 1e-30)
+    norm = mask / (tf.reduce_sum(mask, -1, keep_dims=True) + 1e-6)
     output = tf.reduce_sum(input_x * tf.expand_dims(norm, -1), axis=1)
     return output
 
 
-def MaxPooling(input_x, input_lengths):
+def MaxPooling(input_x, input_len):
     """
     Max pooling.
     Args:
         input_x: [batch, max_sent_len, embedding]
-        input_lengths: [batch]
+        input_len: [batch]
     Returns:
         [batch, sent_embedding]
     """
-    max_sent_len = tf.shape(input_x)[1]
-    mask = tf.sequence_mask(input_lengths, max_sent_len, dtype=tf.float32)
+    max_input_len = tf.shape(input_x)[1]
+    mask = tf.sequence_mask(input_len, max_input_len, dtype=tf.float32)
     mask = tf.expand_dims((1 - mask) * -1e30, -1)
     output = tf.reduce_max(input_x + mask, axis=1)
 
@@ -83,10 +135,12 @@ def MaxPooling(input_x, input_lengths):
 def CNN_Pooling(inputs, filter_sizes=(1, 2, 3, 5), num_filters=100):
     """
     CNN-MaxPooling
-    inputs: [batch_size, sequence_length, hidden_size]
-    filter_sizes: list, [1, 2, 3, 5]
-    num_filters: int, 500
-    :return:
+    Args:
+        inputs: [batch_size, sequence_length, hidden_size]
+        filter_sizes: list, [1, 2, 3, 5]
+        num_filters: int, 100
+    Returns:
+        pool_rep: [batch_size, feature_size]
     """
     sequence_length = inputs.get_shape()[1]
     input_size = inputs.get_shape()[2]
@@ -107,54 +161,70 @@ def CNN_Pooling(inputs, filter_sizes=(1, 2, 3, 5), num_filters=100):
     return pooled_reshape
 
 
-def dot_product_attention(question_rep, passage_repres, passage_mask):
+def dot_product_attention(att_vector, sent_vectors, sent_mask):
     """
     Attention dot_product
-    question_rep: [batch_size, hidden_size]
-    passage_repres: [batch_size, sequence_length, hidden_size]
-    passage_mask: [batch_size, sequence_length]
-    :return: [batch_size, hidden_size]
+    Args:
+        att_vector: [batch_size, hidden_size]
+        sent_vectors: [batch_size, sequence_length, hidden_size]
+        sent_mask: [batch_size, sequence_length]
+    Returns:
+        sent_rep: [batch_size, hidden_size]
     """
-    question_rep = tf.expand_dims(question_rep, 1)
-    passage_prob = softmask(tf.reduce_sum(question_rep * passage_repres, axis=2), passage_mask)
-    passage_rep = tf.reduce_sum(passage_repres * tf.expand_dims(passage_prob, axis=-1), axis=1)
-    return passage_rep
+    att_vector = tf.expand_dims(att_vector, 1)
+    att_prob = softmask(tf.reduce_sum(att_vector * sent_vectors, axis=2), sent_mask)
+    sent_rep = tf.reduce_sum(sent_vectors * tf.expand_dims(att_prob, axis=-1), axis=1)
+    return sent_rep
 
 
-def bilinear_attention(question_rep, passage_repres, passage_mask):
+def bilinear_attention(att_vector, sent_vectors, sent_mask):
     """
     Attention bilinear
-    Parameters: similat to dot product attention
+    ref [danqi]:  https://github.com/danqi/rc-cnn-dailymail/blob/master/code/nn_layers.py
+    Args:
+        att_vector: [batch_size, hidden_size]
+        sent_vectors: [batch_size, sequence_length, hidden_size]
+        sent_mask: [batch_size, sequence_length]
+    Returns:
+        passage_rep: [batch_size, hidden_size]
     """
-    hidden_size = question_rep.get_shape()[1]
+    hidden_size = att_vector.get_shape()[1]
     W_bilinear = tf.get_variable("W_bilinear", shape=[hidden_size, hidden_size], dtype=tf.float32)
 
-    question_rep = tf.matmul(question_rep, W_bilinear)
-    question_rep = tf.expand_dims(question_rep, 1)
-    passage_prob = softmask(tf.reduce_sum(question_rep * passage_repres, axis=2), passage_mask)
-    passage_rep = tf.reduce_sum(passage_repres * tf.expand_dims(passage_prob, axis=-1), axis=1)
-    return passage_rep
+    att_vector = tf.matmul(att_vector, W_bilinear)
+    att_vector = tf.expand_dims(att_vector, 1)
+    alpha = tf.nn.softmax(tf.reduce_sum(att_vector * sent_vectors, axis=2))
+    alpha = alpha * sent_mask
+    alpha = alpha / tf.reduce_sum(alpha, axis=-1, keep_dims=True)
+    sent_rep = tf.reduce_sum(sent_vectors * tf.expand_dims(alpha, axis=-1), axis=1)
+    return sent_rep
 
 
 def softmask(input_prob, input_mask, eps=1e-6):
     """
     normarlize the probability
-    :param input_prob: [batch_size, sequence_length]
-    :param input_mask: [batch_size, sequence_length]
-    :return: [batch_size, sequence]
+    Args:
+        input_prob: [batch_size, sequence_length]
+        input_mask: [batch_size, sequence_length]
+        eps:
+
+    Returns:
+        [batch_size, sequence]
     """
     input_prob = tf.exp(input_prob, name='exp')
     input_prob = input_prob * input_mask
     input_sum = tf.reduce_sum(input_prob, axis=1, keep_dims=True)
-    input_prob = input_prob / (input_sum + eps)
+    input_prob /= (input_sum + eps)
     return input_prob
 
 
 def length(data):
     """
     calculate length, according to zero
-    :param data:
-    :return:
+    Args:
+        data:
+    Returns:
+
     """
     used = tf.sign(tf.reduce_max(tf.abs(data), reduction_indices=2))
     length = tf.reduce_sum(used, reduction_indices=1)
@@ -177,63 +247,45 @@ def last_relevant(output, length):
     return relevant
 
 
-def context_representation(question_repres, question_len, passage_repres, passage_len, lstm_size, dropout_rate,
-                           name_scope=None, reuse=None):
+def gate_mechanism(word_repres, lstm_repres, output_size):
     """
-
-    :param name_scope:
-    :param reuse:
-    :return:
+    Gate Mechanism of two representations, such as word and lstm
+    Args:
+        word_repres: [batch_size, sent_len, dim_1]
+        lstm_repres: [batch_size, sent_len, dim_2]
+        output_size:
+    Returns:
+        outputs: [batch_size, sent_len, output_size]
     """
-    with tf.variable_scope(name_scope or 'BiLSTM_Layer', reuse=reuse):
-        # [batch, time_step, n_hidden]
+    batch_size = tf.shape(word_repres)[0]
+    passage_len = tf.shape(word_repres)[1]
+    word_size = tf.shape(word_repres)[2]
+    lstm_size = tf.shape(lstm_repres)[2]
 
-        cell_fw = tf.contrib.rnn.GRUCell(lstm_size)
-        cell_bw = tf.contrib.rnn.GRUCell(lstm_size)
-
-        cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, output_keep_prob=(1 - dropout_rate))
-        cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, output_keep_prob=(1 - dropout_rate))
-
-        # stack lstm : tf.contrib.rnn.MultiRNNCell([network] * self._num_layers)
-
-        # passage representation : [batch_size, passage_len, context_lstm_dim]
-        question_b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, question_repres, question_len,
-                                                                       dtype=tf.float32)
-
-        tf.get_variable_scope().reuse_variables()
-        passage_b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, passage_repres, passage_len,
-                                                                      dtype=tf.float32)
-
-    # b_outputs: tuple: (context_repres_fw, context_repres_bw)
-    return question_b_outputs, passage_b_outputs
-
-
-def gate_mechanism(word_repres, lstm_repres, output_size, scope=None, reuse=None):
-    # word_repres: [batch_size, passage_len, dim]
-    input_shape = tf.shape(word_repres)
-    batch_size = input_shape[0]
-    passage_len = input_shape[1]
+    gate_word = tf.get_variable("gate_word", [word_size, output_size], dtype=tf.float32)
+    gate_lstm = tf.get_variable("gate_lstm", [lstm_size, output_size], dtype=tf.float32)
+    gate_bias = tf.get_variable("gate_bias", [output_size, ], dtype=tf.float32)
 
     word_repres = tf.reshape(word_repres, [batch_size * passage_len, output_size])
     lstm_repres = tf.reshape(lstm_repres, [batch_size * passage_len, output_size])
-    with tf.variable_scope(scope or "gate_layer", reuse=reuse):
-        gate_word_w = tf.get_variable("gate_word_w", [output_size, output_size], dtype=tf.float32)
-        gate_lstm_w = tf.get_variable("gate_lstm_w", [output_size, output_size], dtype=tf.float32)
-
-        gate_b = tf.get_variable("gate_b", [output_size], dtype=tf.float32)
-
-        gate = tf.nn.sigmoid(tf.matmul(word_repres, gate_word_w) + tf.matmul(lstm_repres, gate_lstm_w) + gate_b)
-
-        outputs = word_repres * gate + lstm_repres * (1.0 - gate)
+    gate = tf.nn.sigmoid(tf.matmul(word_repres, gate_word) + tf.matmul(lstm_repres, gate_lstm) + gate_bias)
+    outputs = word_repres * gate + lstm_repres * (1.0 - gate)
     outputs = tf.reshape(outputs, [batch_size, passage_len, output_size])
+
     return outputs
 
 
 def kl_loss(preds, golds):
+    """
+    KL-divergence Loss
+    Args:
+        preds:
+        golds:
+    Returns:
+        loss
+    """
     golds = tf.maximum(1e-6, golds)
-    print(golds)
     preds = tf.maximum(1e-6, preds)
-    print(preds)
     loss = golds * (tf.log(golds) - tf.log(preds))
     loss = tf.reduce_sum(loss, axis=-1)
     return loss
@@ -296,7 +348,8 @@ def optimize(loss, optimize_type, lambda_l2, learning_rate, clipper=50):
     return train_op
 
 
-def bilinear_attention_layer(question_repres, question_mask, question_rep, passage_repres, passage_mask, passage_rep,
+def bilinear_attention_layer(question_repres, question_mask, question_rep,
+                             passage_repres, passage_mask, passage_rep,
                              out_size=300, scope=None, reuse=None):
     """
     question_repres: [batch_size, sent_length, dim]
@@ -328,18 +381,20 @@ def bilinear_attention_layer(question_repres, question_mask, question_rep, passa
 
 def alignment_attention(question_repres, passage_repres, passage_align_mask, output_size, scope=None, reuse=None):
     """
-    adopt from Qin Chen.
-    :param question_repres: [batch_size, sent_len_1, hidden_size]
-    :param passage_repres: [batch_size, sent_len_2, hidden_size]
-    :param passage_align_mask: [batch_size, sent_len_2, sent_len_1]
-    :param output_size: for the variable in gate
-    :return: [batch_size, sent_len_2, hidden_size]
+    adopt from Chen, Qin.
+    Args:
+        question_repres: [batch_size, sent_len_1, hidden_size]
+        passage_repres: [batch_size, sent_len_2, hidden_size]
+        passage_align_mask: [batch_size, sent_len_2, sent_len_1]
+        output_size: for the variable in gate
+    Returns:
+        [batch_size, sent_len_2, hidden_size]
     """
     with tf.variable_scope(scope or "align_att", reuse=reuse):
         question_repres = tf.expand_dims(question_repres, 1)
         passage_align_mask = tf.expand_dims(passage_align_mask, -1)
         question_repres = tf.reduce_sum(question_repres * passage_align_mask, axis=1)
-        passage_repres = gate_mechanism(question_repres, passage_repres, output_size, scope='align_gate')
+        passage_repres = gate_mechanism(question_repres, passage_repres, output_size)
     return passage_repres
 
 

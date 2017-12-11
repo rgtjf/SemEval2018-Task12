@@ -3,6 +3,9 @@ import numpy as np
 import re, os
 import pickle
 
+from tqdm import tqdm
+import pyprind
+
 pad_word = '__PAD__'
 unk_word = '__UNK__'
 
@@ -204,22 +207,81 @@ def load_fasttext(word2index, emb_file, n_dim=100):
     pass
 
 
-def load_word_embedding(word2index, emb_file, n_dim=300):
+def get_embedding_file_len(file_path):
+    context = os.popen('wc -l %s' % (file_path)).read()
+    line = int(context.split()[0])
+    return line
+
+def load_word_embedding_std(in_vocab, emb_file, n_dim=300):
     """
-    UPDATE_1: fix the
-    ===
-    UPDATE_0: save the oov words in oov.p (pickle)
-    Pros: to analysis why the this happen !!!
-    ===
-    :param word2index: dict, word2index['__UNK__'] = 0
-    :param emb_file: str, file_path
-    :param n_dim:
-    :return: np.array(n_words, n_dim)
+    load word embedding in a standard way:
+    Args:
+        in_vocab:
+        emb_file:
+        n_dim:
+
+    Returns:
+        word2index, embeddings
     """
+    word2index = {}
+    embeddings = []
+    word2index[pad_word] = 0
+    embeddings.append(np.zeros(n_dim))
+    word2index[unk_word] = 1
+    embeddings.append(np.random.uniform(-0.25, 0.25, (n_dim, )))
+    word_index = 2
     print('Load word embedding: %s' % emb_file)
 
-    assert word2index[pad_word] == 0
-    assert word2index[unk_word] == 1
+    total_line = get_embedding_file_len(emb_file)
+    process_bar = pyprind.ProgPercent(total_line)
+
+    with open(emb_file, 'r', errors='ignore') as f:
+    # with open(emb_file, 'r') as f:
+        for idx, line in enumerate(f):
+            process_bar.update()
+            # if the first line is (vocab, ndim)
+            if idx == 0 and len(line.split()) == 2:
+                continue
+            # split the line
+            sp = line.rstrip().split()
+            if len(sp) != n_dim + 1:
+                print(sp[0:len(sp) - n_dim])
+
+            w = ''.join(sp[0:len(sp) - n_dim])
+            emb = [float(x) for x in sp[len(sp) - n_dim:]]
+            assert len(emb) == n_dim
+            if w in in_vocab and w not in word2index:
+                word2index[w] = word_index
+                embeddings.append(emb)
+                word_index += 1
+
+    pre_trained_len = len(word2index)
+    n_words = len(in_vocab)
+
+    print('Pre-trained: {}/{} {:.2f}'.format(pre_trained_len, n_words, pre_trained_len * 100.0 / n_words))
+
+    oov_word_list = [w for w in in_vocab if w not in word2index]
+    print('oov word list example (30): ', oov_word_list[:30])
+    pickle.dump(oov_word_list, open('./oov.p', 'wb'))
+
+    embeddings = np.array(embeddings, dtype=np.float32)
+    return word2index, embeddings
+
+
+def load_word_embedding_my(word2index, emb_file, n_dim=300):
+    """
+    load word embedding in a tricky way:
+    obtain the embedding equal to the len(word2index)
+    Args:
+        word2index:
+        emb_file:
+        n_dim:
+
+    Returns:
+        word2index, embeddings
+    """
+
+    print('Load word embedding: %s' % emb_file)
 
     pre_trained = {}
     n_words = len(word2index)
@@ -227,11 +289,17 @@ def load_word_embedding(word2index, emb_file, n_dim=300):
     embeddings = np.random.uniform(-0.25, 0.25, (n_words, n_dim))
     embeddings[0, ] = np.zeros(n_dim)
 
-    with open(emb_file, 'r') as f:
+    total_line = get_embedding_file_len(emb_file)
+    process_bar = pyprind.ProgPercent(total_line)
+
     # with open(emb_file, 'r', errors='ignore') as f:
+    with open(emb_file, 'r') as f:
         for idx, line in enumerate(f):
+            process_bar.update()
+            # if the first line is (vocab, ndim)
             if idx == 0 and len(line.split()) == 2:
                 continue
+            # split the line
             sp = line.rstrip().split()
             if len(sp) != n_dim + 1:
                 print(sp[0:len(sp) - n_dim])
@@ -252,35 +320,84 @@ def load_word_embedding(word2index, emb_file, n_dim=300):
     pickle.dump(oov_word_list, open('./oov.p', 'wb'))
 
     embeddings = np.array(embeddings, dtype=np.float32)
-    return embeddings
+    return word2index, embeddings
 
 
-def load_embed_from_text(emb_file, token_dim):
+def load_word_embedding(word2index, emb_file, n_dim=300, method='std'):
     """
-    :return: embed: numpy, vocab2id: dict
+    Pros:
+        1. save the oov words in oov.p, to further analysis.
+
+    Args:
+        word2index: dict, word2index / vocab_dict / idf_vocab
+        emb_file: file, word2vec / glove / fasttext
+        n_dim: int, 300
+        method: 'std' / 'my'
+
+    Returns:
+        word2index: word2index['__PAD__'] = 1, word2index['__UNK__'] = 1
+        embeddings: according to word2index
     """
-    print('==> loading embed from txt')
+    if method == 'std':
+        word2index, embeddings = load_word_embedding_std(word2index, emb_file, n_dim)
+    elif method == 'my':
+        assert word2index[pad_word] == 0
+        assert word2index[unk_word] == 1
+        word2index, embeddings = load_word_embedding_my(word2index, emb_file, n_dim)
+    else:
+        raise NotImplementedError
+    return word2index, embeddings
 
-    embed = []
-    vocab2id = {}
 
-    word_id = 0
-    embed.append([0.0] * token_dim)
+def load_embed_from_text(emb_file, n_dim):
+    """
+    load_embedding from raw text
+    Args:
+        emb_file:
+        n_dim:
 
-    with open(emb_file, 'r') as fr:
+    Returns:
+        word2index: dict
+        embeddings: numpy
+    """
+    print('Load word embedding: %s' % emb_file)
 
-        print('embedding info: ', fr.readline())
+    word2index = {}
+    embeddings = []
 
-        for line in fr:
-            t = line.rstrip().split()
-            word_id += 1
-            vocab2id[t[0]] = word_id
+    word2index[pad_word] = 0
+    embeddings.append(np.zeros(n_dim))
+    word2index[unk_word] = 1
+    embeddings.append(np.random.uniform(-0.25, 0.25, (n_dim, )))
+    word_index = 2
 
-            # python3 map return a generator not a list
-            embed.append(list(map(float, t[1:])))
+    total_line = get_embedding_file_len(emb_file)
+    process_bar = pyprind.ProgPercent(total_line)
 
-    print('==> finished load input embed from txt')
-    return np.array(embed, dtype=np.float32), vocab2id
+    with open(emb_file, 'r') as f:
+        for idx, line in enumerate(f):
+            process_bar.update()
+            # if the first line is (vocab, ndim)
+            if idx == 0 and len(line.split()) == 2:
+                print('embedding info: ', line)
+                continue
+
+            # split the line
+            sp = line.rstrip().split()
+            if len(sp) != n_dim + 1:
+                print(sp[0:len(sp) - n_dim])
+
+            w = ''.join(sp[0:len(sp) - n_dim])
+            emb = [float(x) for x in sp[len(sp) - n_dim:]]
+
+            word2index[w] = word_index
+            embeddings.append(emb)
+            word_index += 1
+
+    embeddings = np.array(embeddings, dtype=np.float32)
+    print('finished load input embed!!')
+
+    return word2index, embeddings
 
 
 class Batch(object):

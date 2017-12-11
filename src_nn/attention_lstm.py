@@ -20,6 +20,7 @@ from tensorflow.python.ops.math_ops import sigmoid
 from tensorflow.python.ops.math_ops import tanh
 from tensorflow.python.ops.rnn_cell_impl import _RNNCell as RNNCell
 from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import BasicLSTMCell
+from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import GRUCell
 
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.util import nest
@@ -44,12 +45,12 @@ class LSTMStateTuple(_LSTMStateTuple):
         return c.dtype
 
 
-class BasicAttLSTMCell(BasicLSTMCell):
+class AttBasicLSTMCell(BasicLSTMCell):
     """Basic Alignment-based LSTM recurrent network cell.
 
     """
     def __init__(self, attention_vec, attn_activation=tf.nn.tanh, **kwargs):
-        super(BasicAttLSTMCell, self).__init__(**kwargs)
+        super(AttBasicLSTMCell, self).__init__(**kwargs)
         self.attention_vec = attention_vec
         self.attn_activation = attn_activation
 
@@ -101,6 +102,53 @@ class BasicAttLSTMCell(BasicLSTMCell):
             else:
                 new_state = array_ops.concat([new_c, new_h], 1)
             return new_h, new_state
+
+
+class AttGRUCell(GRUCell):
+
+    def __init__(self, attn_vec, attn_activation=tanh, **kwargs):
+        super(AttGRUCell, self).__init__(**kwargs)
+        self.attn_vec = attn_vec
+        self.attn_activation = attn_activation
+
+    @property
+    def state_size(self):
+        return self._num_units
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    def __call__(self, inputs, state, scope=None):
+        """Gated recurrent unit (GRU) with nunits cells."""
+
+        attn_dim = self.attn_vec.get_shape()[-1]
+        self.U_a = tf.get_variable("U_a", [self._num_units, self._num_units])
+        self.b_a = tf.get_variable("b_a", [self._num_units, ], initializer=tf.constant_initializer(0.0))
+
+        self.U_m = tf.get_variable("U_m", [attn_dim, self._num_units])
+        self.b_m = tf.get_variable("b_m", [self._num_units, ], initializer=tf.constant_initializer(0.0))
+
+        self.U_s = tf.get_variable("U_s", [self._num_units, self._num_units])
+        self.b_s = tf.get_variable("b_s", [self._num_units, ], initializer=tf.constant_initializer(0.0))
+
+        with vs.variable_scope(scope or "gru_cell"):
+            with vs.variable_scope("gates"):  # Reset gate and update gate.
+                # We start with bias of 1.0 to not reset and not update.
+                r, u = array_ops.split(value=_linear([inputs, state], 2 * self._num_units, True, 1.0, scope="ru"),
+                        num_or_size_splits=2, axis=1)
+                r, u = sigmoid(r), sigmoid(u)
+            with vs.variable_scope("candidate"):
+                c = self._activation(_linear([inputs, r * state], self._num_units, True, scope="c"))
+            new_h = u * state + (1 - u) * c
+
+            # attn_vec
+            attn_vec = tf.matmul(self.attn_vec, self.U_m) + self.b_m
+            m = tanh(tf.matmul(new_h, self.U_a) * attn_vec + self.b_a)
+            s = sigmoid(tf.matmul(m, self.U_s) + self.b_s)
+
+            new_h = new_h * s
+        return new_h, new_h
 
 
 class BasicAlignLSTMCell(RNNCell):

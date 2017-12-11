@@ -10,7 +10,7 @@ from __future__ import print_function
 
 import argparse
 
-from confusion_matrix import Alphabet, ConfusionMatrix
+from metric.confusion_matrix import Alphabet, ConfusionMatrix
 
 DICT_LABEL_TO_INDEX = {'0': 0, '1'  : 1}
 DICT_INDEX_TO_LABEL = {index:label for label, index in DICT_LABEL_TO_INDEX.items()}

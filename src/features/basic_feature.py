@@ -12,20 +12,18 @@ from stst import Feature
 from stst import utils
 import config
 
+
 class BowFeature(Feature):
 
     def extract_information(self, train_instances):
         if self.is_training:
             sents = []
             for train_instance in train_instances:
-                _warrant0 = train_instance._warrant0.split()
-                _warrant1 = train_instance._warrant1.split()
-                _reason = train_instance._reason.split()
-                _claim = train_instance._claim.split()
-                sents.append(_warrant0)
-                sents.append(_warrant1)
-                sents.append(_reason)
-                sents.append(_claim)
+                warrant0, warrant1, reason, claim, title, info = train_instance.get_six(type='word')
+                sents.append(warrant0)
+                sents.append(warrant1)
+                sents.append(reason)
+                sents.append(claim)
             idf_dict = utils.idf_calculator(sents)
             # idf_dict = sorted(idf_dict.items(), key=lambda x: x[1], reverse=True)
             with utils.create_write_file(config.RESOURCE_DIR + '/idf_dict.txt') as fw:
@@ -41,13 +39,10 @@ class BowFeature(Feature):
         self.unigram_dict = idf_dict
 
     def extract(self, train_instance):
-        _warrant0 = train_instance._warrant0.split()
-        _warrant1 = train_instance._warrant1.split()
-        _reason = train_instance._reason.split()
-        _claim = train_instance._claim.split()
+        warrant0, warrant1, reason, claim, title, info = train_instance.get_six(type='word')
 
-        _warrant0 = _warrant0 + _reason + _claim
-        _warrant1 = _warrant1 + _reason + _claim
+        _warrant0 = warrant0 + reason + claim
+        _warrant1 = warrant1 + reason + claim
 
         self.vocab = utils.word2index(self.unigram_dict)
         feat0 = utils.vectorize(_warrant0, self.unigram_dict, self.vocab)

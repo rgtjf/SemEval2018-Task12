@@ -2,25 +2,30 @@
 """
 @author rgtjf
 
-@Update 170924
 ==============
+@Update 171121
+1. ADD function get_time_name
+
+==============
+@Update 170924
 1. ADD function logging part
 2. ADD function config part
 3. ADD Class DictVocab
 
-@Update 170811
 ==============
+@Update 170811
 1. ADD      load_embedding_from_text
     - from raw embedding
 2. MODIFY   load_word_embedding
     - minor update
 
-@Update 170804
 ==============
+@Update 170804
 Version 1.0
 """
 from __future__ import print_function
 
+import datetime
 import time
 import csv, math
 import codecs
@@ -69,6 +74,14 @@ def Test():
 class SingletonTest(object):
     pass
 
+
+def get_time_name(prefix):
+    """
+    Returns:
+        "prefix_mm_dd_hh_MM"
+    """
+    time_str = datetime.datetime.now().strftime('_%m%d_%H_%M')
+    return prefix + time_str
 
 def get_logger(file_name):
     """ return the default logger """

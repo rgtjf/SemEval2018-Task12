@@ -6,7 +6,8 @@ import numpy as np
 import tensorflow as tf
 import config
 import tf_utils
-from attention_lstm import BasicAttLSTMCell
+from attention_lstm import AttBasicLSTMCell
+from attention_lstm import AttGRUCell
 
 
 class IntraAttentionIIModel(object):
@@ -59,36 +60,19 @@ class IntraAttentionIIModel(object):
         embedded_diff_warrant0 = tf.nn.embedding_lookup(self.we, self.input_diff_warrant0)
         embedded_diff_warrant1 = tf.nn.embedding_lookup(self.we, self.input_diff_warrant1)
 
-        ''' BiLSTM layer '''
-        def BiLSTM(input_x, input_x_len, hidden_size, num_layers=1, dropout_rate=None, return_sequence=True):
+        def AttBiLSTM(attention_vector, input_x, input_x_len, hidden_size, rnn_type='lstm', return_sequence=True):
             """
-            TODO: return_sequence Bug
+            AttBiLSTM layer
             """
-            # cell = tf.contrib.rnn.GRUCell(hidden_size)
-            cell_fw = tf.contrib.rnn.BasicLSTMCell(hidden_size)
-            cell_bw = tf.contrib.rnn.BasicLSTMCell(hidden_size)
-
-            if num_layers > 1:
-                # Warning! Please consider that whether the cell to stack are the same
-                cell_fw = tf.contrib.rnn.MultiRNNCell([cell_fw for _ in range(num_layers)])
-                cell_bw = tf.contrib.rnn.MultiRNNCell([cell_bw for _ in range(num_layers)])
-
-            if dropout_rate:
-                cell_fw = tf.contrib.rnn.DropoutWrapper(cell_fw, output_keep_prob=(1 - dropout_rate))
-                cell_bw = tf.contrib.rnn.DropoutWrapper(cell_bw, output_keep_prob=(1 - dropout_rate))
-
-            b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, input_x,
-                                                                  sequence_length=input_x_len,
-                                                                  dtype=tf.float32)
-            if return_sequence:
-                outputs = tf.concat(b_outputs, axis=2)
+            if rnn_type == 'lstm':
+                Cell = AttBasicLSTMCell
+            elif rnn_type == 'gru':
+                Cell = AttGRUCell
             else:
-                outputs = tf.concat([b_states[0][1], b_states[1][1]], axis=-1)
-            return outputs
+                raise NotImplementedError
 
-        def AttBiLSTM(attention_vector, input_x, input_x_len, hidden_size, return_sequence=True):
-            cell_fw = BasicAttLSTMCell(attention_vector, num_units=hidden_size)
-            cell_bw = BasicAttLSTMCell(attention_vector, num_units=hidden_size)
+            cell_fw = Cell(attention_vector, num_units=hidden_size)
+            cell_bw = Cell(attention_vector, num_units=hidden_size)
 
             b_outputs, b_states = tf.nn.bidirectional_dynamic_rnn(cell_fw, cell_bw, input_x,
                                                                   sequence_length=input_x_len, dtype=tf.float32)
@@ -96,46 +80,58 @@ class IntraAttentionIIModel(object):
                 outputs = tf.concat(b_outputs, axis=2)
             else:
                 # states: [c, h]
-                outputs = tf.concat([b_states[0][1], b_states[1][1]], axis=-1)
+                if rnn_type == 'lstm':
+                    outputs = tf.concat([b_states[0][1], b_states[1][1]], axis=-1)
+                elif rnn_type == 'gru':
+                    outputs = tf.concat(b_states, axis=-1)
+                else:
+                    raise NotImplementedError
             return outputs
 
-        avg_diff_warrant0 = tf_utils.AvgPooling(embedded_diff_warrant0, self.diff_warrant0_len, self.diff_len)
-        avg_diff_warrant1 = tf_utils.AvgPooling(embedded_diff_warrant1, self.diff_warrant1_len, self.diff_len)
+        pooling_diff_warrant0 = tf_utils.AvgPooling(embedded_diff_warrant0, self.diff_warrant0_len)
+        pooling_diff_warrant1 = tf_utils.AvgPooling(embedded_diff_warrant1, self.diff_warrant1_len)
 
         with tf.variable_scope("att_warrant_lstm") as s:
-            bilstm_warrant0 = AttBiLSTM(avg_diff_warrant0, embedded_warrant0, self.warrant0_len, self.lstm_size)
+            bilstm_warrant0 = AttBiLSTM(pooling_diff_warrant0, embedded_warrant0, self.warrant0_len, self.lstm_size,
+                                        rnn_type=FLAGS.rnn_type)
             s.reuse_variables()
-            bilstm_warrant1 = AttBiLSTM(avg_diff_warrant1, embedded_warrant1, self.warrant1_len, self.lstm_size)
+            bilstm_warrant1 = AttBiLSTM(pooling_diff_warrant1, embedded_warrant1, self.warrant1_len, self.lstm_size,
+                                        rnn_type=FLAGS.rnn_type)
 
         with tf.variable_scope("bi_lstm") as s:
-            bilstm_reason = BiLSTM(embedded_reason, self.reason_len, self.lstm_size)
+            bilstm_reason = tf_utils.BiLSTM(embedded_reason, self.reason_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
             s.reuse_variables()
-            bilstm_claim = BiLSTM(embedded_claim, self.claim_len, self.lstm_size)
-            bilstm_debate = BiLSTM(embedded_debate, self.debate_len, self.lstm_size)
+            bilstm_claim = tf_utils.BiLSTM(embedded_claim, self.claim_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_debate = tf_utils.BiLSTM(embedded_debate, self.debate_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
 
-        ''' MaxPooling Layer '''
-        pooling_warrant0 = tf_utils.MaxPooling(bilstm_warrant0, self.warrant0_len)
-        pooling_warrant1 = tf_utils.MaxPooling(bilstm_warrant1, self.warrant1_len)
-        pooling_reason = tf_utils.MaxPooling(bilstm_reason, self.reason_len)
-        pooling_claim = tf_utils.MaxPooling(bilstm_claim, self.claim_len)
-        pooling_debate = tf_utils.MaxPooling(bilstm_debate, self.debate_len)
+        with tf.variable_scope("pooling") as s:
+            ''' Pooling Layer '''
+            pooling_warrant0 = tf_utils.MaxPooling(bilstm_warrant0, self.warrant0_len)
+            pooling_warrant1 = tf_utils.MaxPooling(bilstm_warrant1, self.warrant1_len)
+            pooling_reason = tf_utils.MaxPooling(bilstm_reason, self.reason_len)
+            pooling_claim = tf_utils.MaxPooling(bilstm_claim, self.claim_len)
+            pooling_debate = tf_utils.MaxPooling(bilstm_debate, self.debate_len)
 
-        attention_vector_for_W0 = tf.concat([pooling_debate, pooling_reason, pooling_warrant0, pooling_claim, avg_diff_warrant0], axis=-1)
-        attention_vector_for_W1 = tf.concat([pooling_debate, pooling_reason, pooling_warrant1, pooling_claim, avg_diff_warrant1], axis=-1)
+        attention_vector_for_W0 = tf.concat([pooling_debate, pooling_reason, pooling_warrant0, pooling_claim, pooling_diff_warrant0], axis=-1)
+        attention_vector_for_W1 = tf.concat([pooling_debate, pooling_reason, pooling_warrant1, pooling_claim, pooling_diff_warrant1], axis=-1)
 
         with tf.variable_scope("att_lstm") as s:
-            attention_warrant0 = AttBiLSTM(attention_vector_for_W0, bilstm_warrant0, self.warrant0_len, self.lstm_size, return_sequence=False)
+            attention_warrant0 = AttBiLSTM(attention_vector_for_W0, bilstm_warrant0, self.warrant0_len, self.lstm_size,
+                                           rnn_type = FLAGS.rnn_type,
+                                           return_sequence=False)
             s.reuse_variables()
-            attention_warrant1 = AttBiLSTM(attention_vector_for_W1, bilstm_warrant1, self.warrant1_len, self.lstm_size, return_sequence=False)
+            attention_warrant1 = AttBiLSTM(attention_vector_for_W1, bilstm_warrant1, self.warrant1_len, self.lstm_size,
+                                           rnn_type=FLAGS.rnn_type,
+                                           return_sequence=False)
 
         self.attention_warrant0 = attention_warrant0
         self.attention_warrant1 = attention_warrant1
 
         # concatenate them
-        warrant_0minus1 = attention_warrant0 - attention_warrant1
-        warrant_1minus0 = attention_warrant1 - attention_warrant0
-        merge_warrant = tf.concat([warrant_1minus0, warrant_0minus1], axis=-1)
-        merge_warrant = tf.concat([attention_warrant0, attention_warrant1, attention_warrant0 - attention_warrant1, attention_warrant0 * attention_warrant1], axis=-1)
+        # merge_warrant = tf.concat([attention_warrant0, attention_warrant1, pooling_diff_warrant0, pooling_diff_warrant1], axis=-1)
+        merge_warrant = tf.concat([attention_warrant0, attention_warrant1,
+                                   attention_warrant0 - attention_warrant1,
+                                   attention_warrant0 * attention_warrant1], axis=-1)
         dropout_warrant = tf.nn.dropout(merge_warrant, self.drop_keep_rate)
 
         # and add one extra layer with ReLU

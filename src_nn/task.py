@@ -8,9 +8,16 @@ import six
 import numpy as np
 
 import data_utils
+import utils
 import config
-from example import Example
 
+import sys
+sys.path.append('../src')
+
+from data.example import Example, ParseExample
+
+
+WORD_TYPE = 'lemma'
 
 class Dataset(object):
     def __init__(self, file_name,
@@ -22,7 +29,7 @@ class Dataset(object):
         Args: file_list:
               word_vocab:
         """
-        self.examples = examples = Example.load_data(file_name)
+        self.examples = examples = ParseExample.load_data(file_name)
 
         instance_id_list = []
         warrant0_list = []
@@ -39,7 +46,10 @@ class Dataset(object):
         debate_meta_data_len = []
 
         for example in examples:
-            instance_id, warrant0, warrant1, correct_label_w0_or_w1, reason, claim, debate_meta_data = example.get_all()
+            warrant0, warrant1, reason, claim, title, info = example.get_six(type=WORD_TYPE)
+            instance_id = example.get_id()
+            debate_meta_data = title + info
+            correct_label_w0_or_w1 = example.get_label()
 
             # convert to the ids
             warrant0 = data_utils.sent_to_index(warrant0, word_vocab)
@@ -127,9 +137,10 @@ class Dataset(object):
             batch.add('claim_len', self.reason_len[excerpt])
             batch.add('debate_len', self.debate_meta_data_len[excerpt])
 
-            def batch_diff(batch_sent0, batch_sent1, unk_id, max_diff_len):
+            def batch_diff(batch_sent0, batch_sent1, do_id, max_diff_len):
                 """
-                unk_id = word_vovab['do']
+                Args:
+                    do_id: word_vocab['do']
                 """
                 batch_diff_sent0 , batch_diff_sent1 = [], []
                 batch_diff_sent0_len , batch_diff_sent1_len = [], []
@@ -137,9 +148,9 @@ class Dataset(object):
                     diff_sent0 = [word for word in sent0 if word not in sent1]
                     diff_sent1 = [word for word in sent1 if word not in sent0]
                     if not diff_sent0:
-                        diff_sent0 = [unk_id]
+                        diff_sent0 = [do_id]
                     if not diff_sent1:
-                        diff_sent1 = [unk_id]
+                        diff_sent1 = [do_id]
                     batch_diff_sent0.append(diff_sent0)
                     batch_diff_sent1.append(diff_sent1)
                     batch_diff_sent0_len.append(min(len(diff_sent0), max_diff_len))
@@ -164,33 +175,45 @@ class Dataset(object):
 
 class Task(object):
 
-    def __init__(self, init=False):
+    def __init__(self, task_name='word2vec-word', init=False):
+        tasks = {
+            'word2vec-lemma': {'emb_file': config.word_embed_file, 'word_type': 'lemma'},
+            'word2vec-word': {'emb_file': config.word_embed_file, 'word_type': 'word'},
+            'fasttext-lemma': {'emb_file': config.fasttext_file, 'word_type': 'lemma'},
+            'fasttext-word': {'emb_file': config.fasttext_file, 'word_type': 'word'},
+            'paragram-lemma': {'emb_file': config.paragram_file, 'word_type': 'lemma'},
+            'paragram-word': {'emb_file': config.paragram_file, 'word_type': 'word'},
+        }
+        task = tasks[task_name]
+        global WORD_TYPE
+        WORD_TYPE = task['word_type']
+
         self.train_file = config.train_file
         self.dev_file = config.dev_file
         self.test_file = None
-        self.word_embed_file = config.word_embed_file
+        self.word_embed_file = task['emb_file']
 
         self.word_dim = config.word_dim
         self.max_len = config.max_sent_len
         self.num_class = config.num_class
 
-        self.we_file = config.we_file
-        self.w2i_file = config.w2i_file
+        self.w2i_file, self.we_file = config.get_w2i_we_file(task_name)
+        utils.check_file_exist(self.w2i_file)
+        utils.check_file_exist(self.we_file)
 
         self.train_predict_file = None
         self.dev_predict_file = None
         self.test_predict_file = None
 
         if init:
-            self.word_vocab = self.build_vocab()
-            self.embed = data_utils.load_word_embedding(self.word_vocab, self.word_embed_file, self.word_dim)
+            word_vocab = self.build_vocab()
+            self.word_vocab, self.embed = data_utils.load_word_embedding(word_vocab, self.word_embed_file, self.word_dim)
 
             data_utils.save_params(self.word_vocab, self.w2i_file)
             data_utils.save_params(self.embed, self.we_file)
         else:
-            self.embed = data_utils.load_params(self.we_file)
             self.word_vocab = data_utils.load_params(self.w2i_file)
-            self.embed = self.embed.astype(np.float32)
+            self.embed = data_utils.load_params(self.we_file)
 
         print("vocab size: %d" % len(self.word_vocab), "we shape: ", self.embed.shape)
         self.train_data = Dataset(self.train_file, self.word_vocab, self.max_len, self.num_class)
@@ -200,10 +223,9 @@ class Task(object):
 
     def build_vocab(self):
         """
-            build sents is for build vocab
-            during multi-lingual task, there are two kinds of sents
-            :return: sents
-            """
+        build sents to  build vocab
+        Return: vocab
+        """
         if self.test_file is None:
             print('test_file is None')
             file_list = [self.train_file, self.dev_file]
@@ -212,11 +234,12 @@ class Task(object):
 
         examples = []
         for file_name in file_list:
-            examples += Example.load_data(file_name)
+            examples += ParseExample.load_data(file_name)
 
         sents = []
         for example in examples:
-            instance_id, warrant0, warrant1, correct_label_w0_or_w1, reason, claim, debate_meta_data = example.get_all()
+            warrant0, warrant1, reason, claim, title, info = example.get_six(type=WORD_TYPE)
+            debate_meta_data = title + info
             sents.append(warrant0)
             sents.append(warrant1)
             sents.append(reason)
@@ -229,4 +252,7 @@ class Task(object):
 
 
 if __name__ == '__main__':
-    task = Task(init=True)
+    # task = Task(init=True)
+    # task = Task(task_name='word2vec-lemma', init=True)
+    task = Task(task_name='paragram-lemma', init=True)
+    task = Task(task_name='paragram-word', init=True)
