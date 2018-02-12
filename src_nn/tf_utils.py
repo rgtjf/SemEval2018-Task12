@@ -14,7 +14,7 @@ import tensorflow as tf
 from tensorflow.python.ops import array_ops
 from tensorflow.python.framework import ops
 from tensorflow.python.util import nest
-
+from keras import backend as K
 
 def fwLSTM(cell_fw, input_x, input_x_len):
     outputs_fw, states_fw = tf.nn.dynamic_rnn(cell=cell_fw, inputs=input_x, sequence_length=input_x_len,
@@ -177,6 +177,13 @@ def dot_product_attention(att_vector, sent_vectors, sent_mask):
     return sent_rep
 
 
+def mlp_attention_vec(att_vec, vec):
+    """vec2vec attention"""
+    hidden_size = vec.get_shape()[1]
+    out_vec = linear([att_vec, vec], hidden_size, True, scope='mlp_att_vec')
+    return out_vec
+
+
 def bilinear_attention(att_vector, sent_vectors, sent_mask):
     """
     Attention bilinear
@@ -309,23 +316,21 @@ def predict_to_score(predicts, num_class):
     return scores
 
 
-def optimize(loss, optimize_type, lambda_l2, learning_rate, clipper=50):
+def optimize(loss, optimize_type, lambda_l2, learning_rate, global_step=None, clipper=50):
     if optimize_type == 'adadelta':
         optimizer = tf.train.AdadeltaOptimizer(learning_rate=learning_rate)
         tvars = tf.trainable_variables()
         l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tvars if v.get_shape().ndims > 1])
         loss = loss + lambda_l2 * l2_loss
         grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), clipper)
-        train_op = optimizer.apply_gradients(list(zip(grads, tvars)))
+        train_op = optimizer.apply_gradients(list(zip(grads, tvars)), global_step)
     elif optimize_type == 'sgd':
-        # Create a variable to track the global step.
-        global_step = tf.Variable(0, name='global_step', trainable=False)
         min_lr = 0.000001
         _lr_rate = tf.maximum(min_lr, tf.train.exponential_decay(learning_rate, global_step, 30000, 0.98))
         train_op = tf.train.GradientDescentOptimizer(learning_rate=_lr_rate).minimize(loss)
     elif optimize_type == 'ema':
         tvars = tf.trainable_variables()
-        train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
+        train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss, global_step)
         # Create an ExponentialMovingAverage object
         ema = tf.train.ExponentialMovingAverage(decay=0.9999)
         # Create the shadow variables, and add ops to maintain moving averages # of var0 and var1.
@@ -340,7 +345,7 @@ def optimize(loss, optimize_type, lambda_l2, learning_rate, clipper=50):
         l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in tvars if v.get_shape().ndims > 1])
         loss = loss + lambda_l2 * l2_loss
         grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), clipper)
-        train_op = optimizer.apply_gradients(list(zip(grads, tvars)))
+        train_op = optimizer.apply_gradients(list(zip(grads, tvars)), global_step)
 
     extra_train_ops = []
     train_ops = [train_op] + extra_train_ops
@@ -467,3 +472,68 @@ class FlipGradientBuilder(object):
 
 
 flip_gradient = FlipGradientBuilder()
+
+
+class MatchLayer(object):
+
+    def __init__(self, normalize, match_type):
+        """
+        Layer that computes a matching matrix between samples in two tensors.
+        Args:
+            normalize: Whether to L2-normalize samples along the dot product axis before
+                taking the dot product. If set to True, then the output of the dot product
+                is the cosine proximity between the two samples.
+            match_type:
+        Refs:
+            https://github.com/faneshion/MatchZoo/blob/master/matchzoo/layers/Match.py
+        """
+        self.normalize = normalize
+        self.match_type = match_type
+        if match_type not in ['dot', 'mul', 'plus', 'minus', 'concat']:
+            raise ValueError('In `Match` layer, '
+                             'param match_type=%s is unknown.' % match_type)
+
+    def __call__(self, inputs):
+        x1 = inputs[0]
+        x2 = inputs[1]
+        shape1 = x1.get_shape()
+        shape2 = x2.get_shape()
+
+        if self.match_type in ['dot']:
+            if self.normalize:
+                x1 = tf.nn.l2_normalize(x1, dim=2)
+                x2 = tf.nn.l2_normalize(x2, dim=2)
+            output = tf.einsum('abd,acd->abc', x1, x2)
+            output = tf.expand_dims(output, 3)  # [shape1[0], shape1[1], shape2[1], 1]
+        elif self.match_type in ['mul', 'plus', 'minus']:
+            x1_exp = tf.stack([x1] * shape2[1], 2)
+            x2_exp = tf.stack([x2] * shape1[1], 1)
+            if self.match_type == 'mul':
+                output = x1_exp * x2_exp
+            elif self.match_type == 'plus':
+                output = x1_exp + x2_exp
+            elif self.match_type == 'minus':
+                output = x1_exp - x2_exp  # [shape1[0], shape1[1], shape2[1], shape1[2]]
+        elif self.match_type in ['concat']:
+            x1_exp = tf.stack([x1] * shape2[1], axis=2)
+            x2_exp = tf.stack([x2] * shape1[1], axis=1)
+            # output: [shape1[0], shape1[1], shape2[1], shape1[2]+shape2[2]]
+            output = tf.concat([x1_exp, x2_exp], axis=3)
+
+        return output
+
+
+def match(inputs, normalize=False, match_type='dot'):
+    """
+    Functional interface to the `Match` layer.
+    Args:
+        inputs: A list of input tensors (with exact 2 tensors).
+        normalize: Whether to L2-normalize samples along the
+            dot product axis before taking the dot product.
+            If set to True, then the output of the dot product
+            is the cosine proximity between the two samples.
+        match_type:
+    Returns:
+        output:
+    """
+    return MatchLayer(normalize=normalize, match_type=match_type)(inputs)

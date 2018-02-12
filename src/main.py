@@ -1,10 +1,9 @@
 # coding: utf8
 
-import config
-from data import data
+from input import data
 import stst
-from features.basic_feature import BowFeature
-from features.warrant_feature import Warrant_Feature
+from features.pmi_feature import *
+from features.warrant_feature import *
 from metric import evaluation
 
 classifier = stst.Classifier(stst.LIB_LINEAR_LR())
@@ -12,12 +11,17 @@ model = stst.Model('NLP', classifier)
 
 model.add(Warrant_Feature(load=False))
 # model.add(BowFeature(load=False))
+# model.add(BI_feature(load=False))
 
 train_file = config.train_file
 train_instances = data.load_parse_data(train_file)
 
 dev_file = config.dev_file
 dev_instances = data.load_parse_data(dev_file)
+
+test_file = config.test_file
+test_instances = data.load_parse_data(test_file)
+
 
 model.train(train_instances, train_file)
 acc = evaluation.Evaluation(train_file, model.output_file)
@@ -27,6 +31,11 @@ print(acc)
 model.test(dev_instances, dev_file)
 acc = evaluation.Evaluation(dev_file, model.output_file)
 print(acc)
+
+model.test(test_instances, test_file)
+acc = evaluation.Evaluation(test_file, model.output_file)
+print(acc)
+
 #
 # with open(config.dev_file) as f:
 #     f.readline()

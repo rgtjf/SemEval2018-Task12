@@ -13,11 +13,10 @@ import config
 
 import sys
 sys.path.append('../src')
-
-from data.example import Example, ParseExample
-
+from input.example import Example, ParseExample
 
 WORD_TYPE = 'lemma'
+
 
 class Dataset(object):
     def __init__(self, file_name,
@@ -46,9 +45,8 @@ class Dataset(object):
         debate_meta_data_len = []
 
         for example in examples:
-            warrant0, warrant1, reason, claim, title, info = example.get_six(type=WORD_TYPE)
+            warrant0, warrant1, reason, claim, debate_meta_data, negclaim = example.get_six(type=WORD_TYPE)
             instance_id = example.get_id()
-            debate_meta_data = title + info
             correct_label_w0_or_w1 = example.get_label()
 
             # convert to the ids
@@ -82,7 +80,7 @@ class Dataset(object):
 
         # text
         self.instance_id_list = np.array(instance_id_list)
-        # flaot
+        # float
         self.correct_label_w0_or_w1_list = np.array(correct_label_w0_or_w1_list, dtype=np.float32)
         # int
         self.warrant0_list = np.array(warrant0_list, dtype=np.int32)
@@ -99,18 +97,65 @@ class Dataset(object):
 
         self.do_id = word_vocab['do']
 
+        # obtain the diff part
+        diff_warrant0_list = []
+        diff_warrant1_list = []
+        diff_claim_list = []
+        diff_warrant0_len_list = []
+        diff_warrant1_len_list = []
+        diff_claim_len_list = []
+        id = 0
+        for example in examples:
+            warrant0, warrant1, reason, claim, debate_meta_data, negclaim = example.get_six(type=WORD_TYPE)
+            la, ra, lb, rb = diffsents(warrant0, warrant1)
+            diff_warrant0 = warrant0[la: ra + 1]
+            diff_warrant1 = warrant1[lb: rb + 1]
+            la, ra, _, _ = diffsents(claim, negclaim)
+            diff_claim = claim[la: ra+1]
+            # print(warrant0, warrant1, diff_warrant0, diff_warrant1)
+            # print(claim, negclaim, diff_claim)
+            # id += 1
+            # if id == 10:
+            #     exit(1)
+
+            # convert to the ids
+            diff_warrant0 = data_utils.sent_to_index(diff_warrant0, word_vocab)
+            diff_warrant1 = data_utils.sent_to_index(diff_warrant1, word_vocab)
+            diff_claim = data_utils.sent_to_index(diff_claim, word_vocab)
+
+            diff_warrant0_list.append(diff_warrant0)
+            diff_warrant1_list.append(diff_warrant1)
+            diff_claim_list.append(diff_claim)
+
+            diff_warrant0_len_list.append(min(len(diff_warrant0), config.max_diff_len))
+            diff_warrant1_len_list.append(min(len(diff_warrant1), config.max_diff_len))
+            diff_claim_len_list.append(min(len(diff_claim), config.max_diff_len))
+
+        diff_warrant0_list = data_utils.pad_2d_matrix(diff_warrant0_list, config.max_diff_len)
+        diff_warrant1_list = data_utils.pad_2d_matrix(diff_warrant1_list, config.max_diff_len)
+        diff_claim_list = data_utils.pad_2d_matrix(diff_claim_list, config.max_diff_len)
+
+        # int
+        self.diff_warrant0_list = np.array(diff_warrant0_list, dtype=np.int32)
+        self.diff_warrant1_list = np.array(diff_warrant1_list, dtype=np.int32)
+        self.diff_claim_list = np.array(diff_claim_list, dtype=np.int32)
+
+        self.diff_warrant0_len = np.array(diff_warrant0_len_list, dtype=np.int32)
+        self.diff_warrant1_len = np.array(diff_warrant1_len_list, dtype=np.int32)
+        self.diff_claim_len = np.array(diff_claim_len_list, dtype=np.int32)
+
     def batch_iter(self, batch_size, shuffle=False):
         """
-        UPDATE_0: add Batch for yield
-        To support different model with different data:
-        - model_1 want data 1, 2, 3, 4;
-        - model_2 want data 1, 2, 3, 4, 5;
-        ===
-        during training: add some data to be enough batch_size
-        during test: add some data to be enough batch_size
-        :param batch_size:
-        :param shuffle:
-        :return:
+        Batch for yield
+        1. support different batch_size in train and test
+        2. To support different model with different data:
+           Ex:  model_1 want data 1, 2, 3, 4;
+                model_2 want data 1, 2, 3, 4, 5;
+        Args:
+            batch_size:
+            shuffle:
+        Returns:
+            batch
         """
         n_data = len(self.correct_label_w0_or_w1_list)
 
@@ -128,54 +173,119 @@ class Dataset(object):
             batch.add('warrant1', self.warrant1_list[excerpt])
             batch.add('label', self.correct_label_w0_or_w1_list[excerpt])
             batch.add('reason', self.reason_list[excerpt])
-            batch.add('claim', self.reason_list[excerpt])
+            batch.add('claim', self.claim_list[excerpt])
             batch.add('debate', self.debate_meta_data_list[excerpt])
 
             batch.add('warrant0_len', self.warrant0_len[excerpt])
             batch.add('warrant1_len', self.warrant1_len[excerpt])
             batch.add('reason_len', self.reason_len[excerpt])
-            batch.add('claim_len', self.reason_len[excerpt])
+            batch.add('claim_len', self.claim_len[excerpt])
             batch.add('debate_len', self.debate_meta_data_len[excerpt])
 
-            def batch_diff(batch_sent0, batch_sent1, do_id, max_diff_len):
-                """
-                Args:
-                    do_id: word_vocab['do']
-                """
-                batch_diff_sent0 , batch_diff_sent1 = [], []
-                batch_diff_sent0_len , batch_diff_sent1_len = [], []
-                for sent0, sent1 in zip(batch_sent0, batch_sent1):
-                    diff_sent0 = [word for word in sent0 if word not in sent1]
-                    diff_sent1 = [word for word in sent1 if word not in sent0]
-                    if not diff_sent0:
-                        diff_sent0 = [do_id]
-                    if not diff_sent1:
-                        diff_sent1 = [do_id]
-                    batch_diff_sent0.append(diff_sent0)
-                    batch_diff_sent1.append(diff_sent1)
-                    batch_diff_sent0_len.append(min(len(diff_sent0), max_diff_len))
-                    batch_diff_sent1_len.append(min(len(diff_sent1), max_diff_len))
+            # def batch_diff(batch_sent0, batch_sent1, do_id, max_diff_len):
+            #     """
+            #     Args:
+            #         do_id: word_vocab['do']
+            #     """
+            #     batch_diff_sent0 , batch_diff_sent1 = [], []
+            #     batch_diff_sent0_len , batch_diff_sent1_len = [], []
+            #     for sent0, sent1 in zip(batch_sent0, batch_sent1):
+            #         diff_sent0 = [word for word in sent0 if word not in sent1]
+            #         diff_sent1 = [word for word in sent1 if word not in sent0]
+            #         if not diff_sent0:
+            #             diff_sent0 = [do_id]
+            #         if not diff_sent1:
+            #             diff_sent1 = [do_id]
+            #         batch_diff_sent0.append(diff_sent0)
+            #         batch_diff_sent1.append(diff_sent1)
+            #         batch_diff_sent0_len.append(min(len(diff_sent0), max_diff_len))
+            #         batch_diff_sent1_len.append(min(len(diff_sent1), max_diff_len))
+            #
+            #     batch_diff_sent0 = data_utils.pad_2d_matrix(batch_diff_sent0, max_diff_len)
+            #     batch_diff_sent1 = data_utils.pad_2d_matrix(batch_diff_sent1, max_diff_len)
+            #     return batch_diff_sent0, batch_diff_sent1, batch_diff_sent0_len, batch_diff_sent1_len
+            #
+            # def batch_diff_cont(batch_sent0, batch_sent1, do_id, max_diff_len):
+            #     """
+            #     Args:
+            #         do_id: word_vocab['do']
+            #     """
+            #     batch_diff_sent0, batch_diff_sent1 = [], []
+            #     batch_diff_sent0_len, batch_diff_sent1_len = [], []
+            #     for sent0, sent1 in zip(batch_sent0, batch_sent1):
+            #
+            #         la, ra, lb, rb = diffsents(sent0, sent1)
+            #         diff_sent0 = sent0[la: ra + 1]
+            #         diff_sent1 = sent1[lb: rb + 1]
+            #
+            #         batch_diff_sent0.append(diff_sent0)
+            #         batch_diff_sent1.append(diff_sent1)
+            #         batch_diff_sent0_len.append(min(len(diff_sent0), max_diff_len))
+            #         batch_diff_sent1_len.append(min(len(diff_sent1), max_diff_len))
+            #
+            #     batch_diff_sent0 = data_utils.pad_2d_matrix(batch_diff_sent0, max_diff_len)
+            #     batch_diff_sent1 = data_utils.pad_2d_matrix(batch_diff_sent1, max_diff_len)
+            #     return batch_diff_sent0, batch_diff_sent1, batch_diff_sent0_len, batch_diff_sent1_len
 
-                batch_diff_sent0 = data_utils.pad_2d_matrix(batch_diff_sent0, max_diff_len)
-                batch_diff_sent1 = data_utils.pad_2d_matrix(batch_diff_sent1, max_diff_len)
-                return batch_diff_sent0, batch_diff_sent1, batch_diff_sent0_len, batch_diff_sent1_len
+            batch.add('diff_warrant0', self.diff_warrant0_list[excerpt])
+            batch.add('diff_warrant1', self.diff_warrant1_list[excerpt])
+            batch.add('diff_claim', self.diff_claim_list[excerpt])
 
-            diff_warrant0, diff_warrant1, diff_warrant0_len, diff_warrant1_len = batch_diff(self.warrant0_list[excerpt], self.warrant1_list[excerpt], self.do_id, config.max_diff_len)
-            diff_warrant0 = np.array(diff_warrant0, dtype=np.int32)
-            diff_warrant0 = np.array(diff_warrant0, dtype=np.int32)
-            diff_warrant0_len = np.array(diff_warrant0_len, dtype=np.int32)
-            diff_warrant1_len = np.array(diff_warrant1_len, dtype=np.int32)
-            batch.add('diff_warrant0', diff_warrant0)
-            batch.add('diff_warrant1', diff_warrant1)
-            batch.add('diff_warrant0_len', diff_warrant0_len)
-            batch.add('diff_warrant1_len', diff_warrant1_len)
+            batch.add('diff_warrant0_len', self.diff_warrant0_len[excerpt])
+            batch.add('diff_warrant1_len', self.diff_warrant1_len[excerpt])
+            batch.add('diff_claim_len', self.diff_claim_len[excerpt])
 
             yield batch
+
+    def write_out(self, predicts, output_file, acc):
+        print("Write to file: {}".format(output_file))
+        print("Examples: {}, Predicts: {}".format(len(self.examples), len(predicts)))
+        utils.check_file_exist(output_file)
+        with utils.create_write_file(output_file) as fw:
+            print('Dev: %.4f' % acc, file=fw)
+            for idx, example in enumerate(self.examples):
+                example_str = example.get_instance_string()
+                print("{}\t#\t{}".format(predicts[idx], example_str), file=fw)
+
+
+def diffsents(sa, sb):
+    """ tell the different part of a sentence pair"""
+    m = len(sa)
+    n = len(sb)
+    la = lb = 0
+    ra = m - 1
+    rb = n - 1
+    while la < m and lb < n:
+        if sa[la] == sb[lb]:
+            la += 1
+            lb += 1
+        else:
+            break
+    while ra >= 0 and rb >= 0:
+        if sa[ra] == sb[rb]:
+            ra -= 1
+            rb -= 1
+        else:
+            break
+    while la > ra or lb > rb:
+        # la -= 1
+        ra += 1
+        # lb -= 1
+        rb += 1
+    if la == ra == m or lb == rb == n:
+        la -= 1
+        ra -= 1
+        lb -= 1
+        rb -= 1
+    assert 0 <= la <= ra < m, "{}\t{}\t{}\t{}\t{}".format(m, la, ra, sa, sb)
+    assert 0 <= lb <= rb < n, "{}\t{}\t{}\t{}\t{}".format(n, lb, rb, sb, sa)
+    # sa[la, ra+1], sb[lb, rb+1]
+    return la, ra, lb, rb
 
 
 class Task(object):
 
-    def __init__(self, task_name='word2vec-word', init=False):
+    def __init__(self, task_name='word2vec-word', init=False, expand=True):
         tasks = {
             'word2vec-lemma': {'emb_file': config.word_embed_file, 'word_type': 'lemma'},
             'word2vec-word': {'emb_file': config.word_embed_file, 'word_type': 'word'},
@@ -188,9 +298,10 @@ class Task(object):
         global WORD_TYPE
         WORD_TYPE = task['word_type']
 
-        self.train_file = config.train_file
+        self.train_file = config.train_exp_file if expand else config.train_file
+
         self.dev_file = config.dev_file
-        self.test_file = None
+        self.test_file = config.test_file
         self.word_embed_file = task['emb_file']
 
         self.word_dim = config.word_dim
@@ -201,14 +312,9 @@ class Task(object):
         utils.check_file_exist(self.w2i_file)
         utils.check_file_exist(self.we_file)
 
-        self.train_predict_file = None
-        self.dev_predict_file = None
-        self.test_predict_file = None
-
         if init:
             word_vocab = self.build_vocab()
             self.word_vocab, self.embed = data_utils.load_word_embedding(word_vocab, self.word_embed_file, self.word_dim)
-
             data_utils.save_params(self.word_vocab, self.w2i_file)
             data_utils.save_params(self.embed, self.we_file)
         else:
@@ -238,8 +344,7 @@ class Task(object):
 
         sents = []
         for example in examples:
-            warrant0, warrant1, reason, claim, title, info = example.get_six(type=WORD_TYPE)
-            debate_meta_data = title + info
+            warrant0, warrant1, reason, claim, debate_meta_data, negclaim = example.get_six(type=WORD_TYPE)
             sents.append(warrant0)
             sents.append(warrant1)
             sents.append(reason)

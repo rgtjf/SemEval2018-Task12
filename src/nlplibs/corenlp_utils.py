@@ -12,9 +12,11 @@ class StanfordCoreNLP:
         self.server_url = server_url
 
     def annotate(self, text, properties=None):
+        if type(text) == list:
+            raise ValueError('text should be str, not list!')
         if isinstance(text, six.text_type):
             text = text.encode('utf8')
-        assert isinstance(text, bytes)
+        assert isinstance(text, bytes), '%s' % text
         if properties is None:
             properties = {}
         else:
@@ -32,7 +34,8 @@ class StanfordCoreNLP:
 
         r = requests.post(
             self.server_url, params={
-                'properties': str(properties)
+                'properties': str(properties),
+                'pipelineLanguage': 'zh',
             }, data=data, headers={'Connection': 'close'})
         output = r.text
         if ('outputFormat' in properties
@@ -50,7 +53,7 @@ class StanfordCoreNLP:
 
 
 class StanfordNLP:
-    def __init__(self, server_url='http://localhost:9000'):
+    def __init__(self, server_url='http://precision:9001'):
         self.server = StanfordCoreNLP(server_url)
 
     def parse(self, text):
@@ -58,8 +61,8 @@ class StanfordNLP:
             'timeout': '50000',
             'ssplit.isOneSentence': 'true',
             'depparse.DependencyParseAnnotator': 'basic',
-            'annotators': 'tokenize,lemma,ssplit,pos,depparse,parse,ner',
-            # 'annotators': 'tokenize,lemma,ssplit,pos,ner',
+            # 'annotators': 'tokenize,lemma,ssplit,pos,depparse,parse,ner',
+            'annotators': 'tokenize,lemma,ssplit,pos,ner',
             'outputFormat': 'json'
         })
 
@@ -89,5 +92,7 @@ if __name__ == '__main__':
 
     parsetext = nlp.parse(u'I love China.')
     print(json.dumps(parsetext, indent=2))
-
     print(stanford_tokenize('She loves China.', type='lemma'))
+
+    # parsetext = nlp.parse(u'我来自中国。')
+    # print(json.dumps(parsetext, indent=2, ensure_ascii=False))

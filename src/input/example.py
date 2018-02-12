@@ -103,20 +103,36 @@ class Example(object):
         with codecs.open(file_path, encoding='utf8') as f:
             #id	warrant0	warrant1	correctLabelW0orW1	reason	claim	debateTitle	debateInfo
             headline = f.readline()
-            for line in f:
-                example_dict = {}
-                items = line.strip().split('\t')
-                example_dict['id'] = items[0]
-                example_dict['warrant0'] = items[1]
-                example_dict['warrant1'] = items[2]
-                example_dict['label'] = items[3]
-                example_dict['reason'] = items[4]
-                example_dict['claim'] = items[5]
-                example_dict['title'] = items[6]
-                example_dict['info'] = items[7]
-                example_dict['debate'] = items[6] + ' ' + items[7]
-                example = Example(example_dict)
-                examples.append(example)
+            if len(headline.split()) == 8:
+                for line in f:
+                    example_dict = {}
+                    items = line.strip().split('\t')
+                    example_dict['id'] = items[0]
+                    example_dict['warrant0'] = items[1]
+                    example_dict['warrant1'] = items[2]
+                    example_dict['label'] = items[3]
+                    example_dict['reason'] = items[4]
+                    example_dict['claim'] = items[5]
+                    example_dict['title'] = items[6]
+                    example_dict['info'] = items[7]
+                    example_dict['debate'] = items[6] + ' ' + items[7]
+                    example = Example(example_dict)
+                    examples.append(example)
+            elif len(headline.split()) == 7:
+                for line in f:
+                    example_dict = {}
+                    items = line.strip().split('\t')
+                    example_dict['id'] = items[0]
+                    example_dict['warrant0'] = items[1]
+                    example_dict['warrant1'] = items[2]
+                    example_dict['label'] = 0
+                    example_dict['reason'] = items[3]
+                    example_dict['claim'] = items[4]
+                    example_dict['title'] = items[5]
+                    example_dict['info'] = items[6]
+                    example_dict['debate'] = items[5] + ' ' + items[6]
+                    example = Example(example_dict)
+                    examples.append(example)
         return examples
 
 
@@ -130,14 +146,15 @@ class ParseExample():
             example_json: list, [id, label, ...]
         """
         self.id, self.label, self._warrant0,  self.warrant0, self._warrant1, self.warrant1, \
-            self._reason, self.reason,  self._claim, self.claim, self._title, self.title, \
-            self._info, self.info = example_json
-
+            self._reason, self.reason,  self._claim, self.claim, self._debate, self.debate, \
+            self._negclaim, self.negclaim,\
+            self._title, self.title, self._info, self.info = example_json
         self.label = int(self.label)
 
     def get_words(self, parse_sent, **kwargs):
         """
         Given parse_sent, return the object
+        e.g., instance.get_word(instance.negclaim, type='lemma')
         Args:
             kwargs: type=word/lemma/pos/ner, stopwords=True/False, lower=True/False
         Returns:
@@ -146,7 +163,7 @@ class ParseExample():
         sent = []
 
         if 'stopwords' in kwargs and kwargs['stopwords'] is True:
-            stopwords_file = 'resources/dict_stopwords.txt'
+            stopwords_file = '../resources/dict_stopwords.txt'
             tokens = parse_sent["sentences"][0]["tokens"]
             sent = [token[kwargs["type"]] for token in tokens if
                     token['word'].lower() not in DictLoader().load_dict('stopwords', stopwords_file)]
@@ -168,68 +185,65 @@ class ParseExample():
     def get_label(self):
         return self.label
 
-    def get_claim(self, **kwargs):
-        return self.get_words(self.claim, **kwargs)
-
-    def get_reason(self, **kwargs):
-        return self.get_words(self.reason, **kwargs)
-
-    def get_warrant0(self, **kwargs):
-        return self.get_words(self.warrant0, **kwargs)
-
-    def get_warrant1(self, **kwargs):
-        return self.get_words(self.warrant1, **kwargs)
-
-    def get_title(self, **kwargs):
-        return self.get_words(self.title, **kwargs)
-
-    def get_info(self, **kwargs):
-        return self.get_words(self.info, **kwargs)
-
     def get_id(self):
         return self.id
 
-    def get_sent(self, name, **kwargs):
-        if name == 'warrant0':
-            sent = self.get_warrant0(**kwargs)
-        elif name == 'warrant1':
-            sent = self.get_warrant1(**kwargs)
-        elif name == 'reason':
-            sent = self.get_reason(**kwargs)
-        elif name == 'claim':
-            sent = self.get_claim(**kwargs)
-        elif name == 'title':
-            sent = self.get_title(**kwargs)
-        elif name == 'info':
-            sent = self.get_info(**kwargs)
-        else:
-            raise NotImplementedError
-        return sent
-
     def get_instance_string(self):
         instance_string = "{}\t{}\t{}\t{}\t{}".format(self.label,
-                                                      ' '.join(self.warrant0), ' '.join(self.warrant1),
-                                                      ' '.join(self.claim), ' '.join(self.reason))
+                                                      self._warrant0, self._warrant1,
+                                                      self._claim, self._reason)
         return instance_string
 
-    def get_six(self, return_str=False, **kwargs):
+    def get_six(self, return_str=False, word_preprocess=None, **kwargs):
         """
-        warrant0, warrant1, reason, claim, title, info = train_instance.get_six(type='word', return_str=True)
+        warrant0, warrant1, reason, claim, debate, negclaim = train_instance.get_six(type='word', return_str=True)
         Args:
             return_str: False, return list; True, return str
         """
-        warrant0 = self.get_warrant0(**kwargs)
-        warrant1 = self.get_warrant1(**kwargs)
-        reason = self.get_reason(**kwargs)
-        claim = self.get_claim(**kwargs)
-        title = self.get_title(**kwargs)
-        info = self.get_info(**kwargs)
+        warrant0 = self.get_words(self.warrant0, **kwargs)
+        warrant1 = self.get_words(self.warrant1, **kwargs)
+        reason = self.get_words(self.reason, **kwargs)
+        claim = self.get_words(self.claim, **kwargs)
+        debate = self.get_words(self.debate, **kwargs)
+        negclaim = self.get_words(self.negclaim, **kwargs)
+
+        if word_preprocess is None:
+            pass
+            # def word_preprocess(word):
+            #     pairs = [('alwayst', 'always'), ('paretnt', 'parent'),
+            #              ('financiall', 'financial'), ("'s", 'is'),
+            #              ('candidante', 'candidate'), ('vaildate', 'validate'),
+            #              ('locaiton', 'location'), ('sufficience', 'sufficiency'),
+            #              ('enrol', 'enroll')]
+            #     for pair in pairs:
+            #         if word == pair[0]:
+            #             word = pair[1]
+            #     if word == '-':
+            #         word = ['-']
+            #     else:
+            #         word = word.split('-')
+            #     return word
+            # def sent_preprocess(sent):
+            #     result = []
+            #     for word in sent:
+            #         result += word_preprocess(word)
+            #     return result
+            # warrant0 = sent_preprocess(warrant0)
+            # warrant1 = sent_preprocess(warrant1)
+            # reason = sent_preprocess(reason)
+            # claim = sent_preprocess(claim)
+            # title = sent_preprocess(title)
+            # info = sent_preprocess(info)
 
         if return_str:
             return ' '.join(warrant0), ' '.join(warrant1), ' '.join(reason), \
-                    ' '.join(claim), ' '.join(title), ' '.join(info)
+                    ' '.join(claim), ' '.join(debate), ' '.join(negclaim)
         else:
-            return warrant0, warrant1, reason, claim, title, info
+            return warrant0, warrant1, reason, claim, debate, negclaim
+
+    def get_all(self):
+        # warrant0, warrant1, reason, claim, debate, negclaim
+        return self.warrant0, self.warrant1, self.reason, self.claim, self.debate, self.negclaim
 
     @staticmethod
     def load_data(file_path):
@@ -250,3 +264,5 @@ class ParseExample():
                 parse_data.append(parse_example)
         print("Load Data, file_path=%s  n_line=%d\n" % (parse_file_path, len(parse_data)))
         return parse_data
+
+

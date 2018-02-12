@@ -10,7 +10,7 @@ from attention_lstm import AttBasicLSTMCell
 from attention_lstm import AttGRUCell
 
 
-class IntraAttentionIIModel(object):
+class IntraAttentionCNNMarginModel(object):
 
     def __init__(self, FLAGS=None):
         self.FLAGS = FLAGS
@@ -60,7 +60,7 @@ class IntraAttentionIIModel(object):
         embedded_diff_warrant0 = tf.nn.embedding_lookup(self.we, self.input_diff_warrant0)
         embedded_diff_warrant1 = tf.nn.embedding_lookup(self.we, self.input_diff_warrant1)
 
-        def conv_ngram(input_x, filter_sizes=(1, 2), num_filters=32):
+        def conv_ngram(input_x, filter_sizes=(1, 2, 3), num_filters=32):
             """
             Conv ngram
             """
@@ -75,10 +75,20 @@ class IntraAttentionIIModel(object):
                     b = tf.get_variable("b", [num_filters], initializer=tf.constant_initializer(0.0))
                     conv = tf.nn.conv2d(input_x, W, strides=[1, 1, embed_size, 1], padding='SAME', name="conv")
                     h = tf.nn.relu(tf.nn.bias_add(conv, b), name="relu")
+                    h = tf.squeeze(h, axis=2)
                     outputs.append(h)
             outputs = tf.concat(outputs, axis=2)
             return outputs
 
+        with tf.variable_scope("conv") as s:
+            conv_warrant0 = conv_ngram(embedded_warrant0)
+            s.reuse_variables()
+            conv_warrant1 = conv_ngram(embedded_warrant1)
+            conv_reason = conv_ngram(embedded_reason)
+            conv_claim = conv_ngram(embedded_claim)
+            conv_debate = conv_ngram(embedded_debate)
+            conv_diff_warrant0 = conv_ngram(embedded_diff_warrant0)
+            conv_diff_warrant1 = conv_ngram(embedded_diff_warrant1)
 
         def AttBiLSTM(attention_vector, input_x, input_x_len, hidden_size, rnn_type='lstm', return_sequence=True):
             """
@@ -108,21 +118,21 @@ class IntraAttentionIIModel(object):
                     raise NotImplementedError
             return outputs
 
-        pooling_diff_warrant0 = tf_utils.AvgPooling(embedded_diff_warrant0, self.diff_warrant0_len)
-        pooling_diff_warrant1 = tf_utils.AvgPooling(embedded_diff_warrant1, self.diff_warrant1_len)
+        pooling_diff_warrant0 = tf_utils.MaxPooling(conv_diff_warrant0, self.diff_warrant0_len)
+        pooling_diff_warrant1 = tf_utils.MaxPooling(conv_diff_warrant1, self.diff_warrant1_len)
 
         with tf.variable_scope("att_warrant_lstm") as s:
-            bilstm_warrant0 = AttBiLSTM(pooling_diff_warrant0, embedded_warrant0, self.warrant0_len, self.lstm_size,
+            bilstm_warrant0 = AttBiLSTM(pooling_diff_warrant0, conv_warrant0, self.warrant0_len, self.lstm_size,
                                         rnn_type=FLAGS.rnn_type)
             s.reuse_variables()
-            bilstm_warrant1 = AttBiLSTM(pooling_diff_warrant1, embedded_warrant1, self.warrant1_len, self.lstm_size,
+            bilstm_warrant1 = AttBiLSTM(pooling_diff_warrant1, conv_warrant1, self.warrant1_len, self.lstm_size,
                                         rnn_type=FLAGS.rnn_type)
 
         with tf.variable_scope("bi_lstm") as s:
-            bilstm_reason = tf_utils.BiLSTM(embedded_reason, self.reason_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_reason = tf_utils.BiLSTM(conv_reason, self.reason_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
             s.reuse_variables()
-            bilstm_claim = tf_utils.BiLSTM(embedded_claim, self.claim_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
-            bilstm_debate = tf_utils.BiLSTM(embedded_debate, self.debate_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_claim = tf_utils.BiLSTM(conv_claim, self.claim_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_debate = tf_utils.BiLSTM(conv_debate, self.debate_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
 
         with tf.variable_scope("pooling") as s:
             ''' Pooling Layer '''
@@ -148,22 +158,38 @@ class IntraAttentionIIModel(object):
         self.attention_warrant1 = attention_warrant1
 
         # concatenate them
-        # merge_warrant = tf.concat([attention_warrant0, attention_warrant1, pooling_diff_warrant0, pooling_diff_warrant1], axis=-1)
-        merge_warrant = tf.concat([attention_warrant0, attention_warrant1,
-                                   attention_warrant0 - attention_warrant1,
-                                   attention_warrant0 * attention_warrant1], axis=-1)
-        dropout_warrant = tf.nn.dropout(merge_warrant, self.drop_keep_rate)
+        # merge_warrant = tf.concat([pooling_reason * pooling_claim,
+        #                            attention_warrant0, attention_warrant1,
+        #                            attention_warrant0 - attention_warrant1,
+        #                            attention_warrant0 * attention_warrant1], axis=-1)
+        # dropout_warrant = tf.nn.dropout(merge_warrant, self.drop_keep_rate)
 
         # and add one extra layer with ReLU
         with tf.variable_scope("linear") as s:
-            dense1 = tf.nn.relu(tf_utils.linear(dropout_warrant, int(self.lstm_size / 2), bias=True, scope='dense'))
-            logits = tf_utils.linear(dense1, self.num_class, bias=True, scope='logit')
+            dropout_warrant0 = tf.nn.dropout(attention_warrant0, self.drop_keep_rate)
+            dense0 = tf.nn.relu(tf_utils.linear(dropout_warrant0, int(self.lstm_size / 2), bias=True, scope='dense'))
+            logit0 = tf_utils.linear(dense0, 1, bias=True, scope='logit')
+            logit0 = tf.nn.sigmoid(logit0)
+            # reuse_variables
+            s.reuse_variables()
+            dropout_warrant1 = tf.nn.dropout(attention_warrant1, self.drop_keep_rate)
+            dense1 = tf.nn.relu(tf_utils.linear(dropout_warrant1, int(self.lstm_size / 2), bias=True, scope='dense'))
+            logit1 = tf_utils.linear(dense1, 1, bias=True, scope='logit')
+            logit1 = tf.nn.sigmoid(logit1)
 
         # Obtain the Predict, Loss, Train_op
-        predict_prob = tf.nn.softmax(logits, name='predict_prob')
-        predict_label = tf.cast(tf.argmax(logits, axis=1), tf.int32)
+        # if logit0 < logit1, then choose 1
+        # else choose 0
+        predict_label = tf.cast(logit0 < logit1, tf.int32)
+        predict_label = tf.squeeze(predict_label)
+        predict_prob = tf.concat([logit0, logit1], axis=-1)
 
-        loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=self.target_label)
+        zero = tf.constant(0, shape=[1], dtype=tf.float32)
+        margin = tf.constant(0.05, shape=[1], dtype=tf.float32)
+        # [0, 1] * [logit0-logit1, logit1-logit0]
+        target_label = tf.cast(self.target_label, dtype=tf.float32)
+        cost = tf.reduce_sum(target_label * tf.concat([logit0-logit1, logit1-logit0], axis=-1), axis=-1)
+        loss = tf.maximum(zero, tf.subtract(margin, cost))
         loss = tf.reduce_mean(loss)
 
         # Build the loss
@@ -196,8 +222,8 @@ class IntraAttentionIIModel(object):
             self.diff_warrant1_len: batch.diff_warrant1_len,
 
             self.target_label : batch.label,
-            self.drop_keep_rate: self.FLAGS.drop_keep_rate,
-            self.learning_rate: self.FLAGS.learning_rate,
+            self.drop_keep_rate : self.FLAGS.drop_keep_rate,
+            self.learning_rate : self.FLAGS.learning_rate,
         }
         to_return = {
             'train_op': self.train_op,

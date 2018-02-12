@@ -2,7 +2,7 @@ import random
 import numpy as np
 import re, os
 import pickle
-
+from collections import Counter
 from tqdm import tqdm
 import pyprind
 
@@ -158,16 +158,17 @@ def pad_3d_tensor(batch_chars, max_sent_length=None, max_word_length=None, dtype
     return padding_chars
 
 
-def build_word_vocab(sents):
+def build_word_vocab(sents, min_freq=0):
     """
 
     :param sents:
     :return: word2index
     """
-    words = set()
+    words = Counter()
     for sent in sents:
         words.update(sent)
-    words_vocab = {word:index+2 for index, word in enumerate(words)}
+    words = [word for word, count in words.items() if count >= min_freq]
+    words_vocab = {word: index+2 for index, word in enumerate(words)}
     words_vocab[pad_word] = 0
     words_vocab[unk_word] = 1
     return words_vocab
@@ -184,10 +185,37 @@ def build_char_vocab(sents):
         for word in sent:
             word = list(word)
             chars.update(word)
-    chars_vocab = {char:index+2 for index, char in enumerate(chars)}
+    chars_vocab = {char: index+2 for index, char in enumerate(chars)}
     chars_vocab[pad_word] = 0
     chars_vocab[unk_word] = 1
     return chars
+
+
+def char_padding(word_list, char_vocab, max_sent_len, max_word_len):
+    """
+    char padding
+    Args:
+        word_list:
+        char_vocab:
+        max_sent_len:
+        max_word_len:
+    Returns:
+        char_matrix, char_len
+    """
+    char_matrix = np.zeros((max_sent_len, max_word_len), dtype=np.int32)
+    char_len = np.zeros((max_word_len, ), dtype=np.int32)
+    word_len = min(len(word_list), max_sent_len)
+    for i in range(word_len):
+        word = word_list[i]
+        if len(word) > max_word_len:
+            word = word[:max_word_len]
+        char_len[i] = len(word)
+        for j, char in enumerate(word):
+            if char not in char_vocab:
+                char_matrix[i, j] = char_vocab[unk_word]
+            else:
+                char_matrix[i, j] = char_vocab[char]
+    return char_matrix, char_len
 
 
 def load_fasttext_unk_words(oov_word_list, word2index, word_embedding):
@@ -212,6 +240,7 @@ def get_embedding_file_len(file_path):
     line = int(context.split()[0])
     return line
 
+
 def load_word_embedding_std(in_vocab, emb_file, n_dim=300):
     """
     load word embedding in a standard way:
@@ -219,7 +248,6 @@ def load_word_embedding_std(in_vocab, emb_file, n_dim=300):
         in_vocab:
         emb_file:
         n_dim:
-
     Returns:
         word2index, embeddings
     """

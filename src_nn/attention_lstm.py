@@ -151,6 +151,42 @@ class AttGRUCell(GRUCell):
         return new_h, new_h
 
 
+class SRUCell(RNNCell):
+    """Simple Recurrent Unit (SRU).
+       This implementation is based on: Tao Lei and Yu Zhang, "Training RNNs as Fast as CNNs,"
+       https://arxiv.org/abs/1709.02755
+    """
+    def __init__(self, num_units, activation=None, reuse=None):
+        self._num_units = num_units
+        self._activation = activation or tf.tanh
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    @property
+    def state_size(self):
+        return self._num_units
+
+    def __call__(self, inputs, state, scope=None):
+        """Run one step of SRU."""
+
+        with tf.variable_scope(scope or type(self).__name__):  # "SRUCell"
+            with tf.variable_scope("Inputs"):
+                x = _linear([inputs], self._num_units, False)
+            with tf.variable_scope("Gate"):
+                concat = tf.sigmoid(
+                    _linear([inputs], 2 * self._num_units, True))
+                f, r = tf.split(axis=1, num_or_size_splits=2, value=concat)
+
+            c = f * state + (1 - f) * x
+
+            # highway connection
+            h = r * self._activation(c) + (1 - r) * inputs
+
+        return h, c
+
+
 class BasicAlignLSTMCell(RNNCell):
 
     def __init__(self, align_repres, align_rep, split_size, num_units, var_dicts, forget_bias=1.0, input_size=None,

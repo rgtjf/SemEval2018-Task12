@@ -51,7 +51,10 @@ class ConfusionMatrix(object):
 
     def add_list(self, predictions, true_answers):
         for p, t in zip(predictions, true_answers):
-            self.add(p, t)
+            try:
+                self.add(p, t)
+            except:
+                print(p, t)
 
     def compute_average_f1(self):
         precision = numpy.zeros(self.alphabet.size())

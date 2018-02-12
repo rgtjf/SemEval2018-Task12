@@ -1,9 +1,8 @@
-# coding: utf-8
-
-from metric.confusion_matrix import Alphabet, ConfusionMatrix
+# coding: utf8
+from confusion_matrix import Alphabet, ConfusionMatrix
 
 DICT_LABEL_TO_INDEX = {'0': 0, '1': 1}
-DICT_INDEX_TO_LABEL = {index:label for label, index in DICT_LABEL_TO_INDEX.items()}
+DICT_INDEX_TO_LABEL = {index: label for label, index in DICT_LABEL_TO_INDEX.items()}
 
 
 def Evaluation(gold_file_path, predict_file_path):
@@ -25,12 +24,28 @@ def Evaluation(gold_file_path, predict_file_path):
         return overall_accuracy, macro_p, macro_r, macro_f1
 
 
-def Evalation_lst(gold_label, predict_label, print_all=False):
+# def Evalation_list(gold_label, predict_label, print_all=False):
+#     binary_alphabet = Alphabet()
+#     for i in range(2):
+#         binary_alphabet.add(DICT_INDEX_TO_LABEL[i])
+#
+#     cm = ConfusionMatrix(binary_alphabet)
+#     cm.add_list(predict_label, gold_label)
+#
+#     if print_all:
+#         cm.print_out()
+#     overall_accuracy = cm.get_accuracy()
+#     return overall_accuracy
+
+
+def Evalation_list(gold_label, predict_label, print_all=False):
     binary_alphabet = Alphabet()
     for i in range(2):
-        binary_alphabet.add(DICT_INDEX_TO_LABEL[i])
+        binary_alphabet.add(str(i))
 
     cm = ConfusionMatrix(binary_alphabet)
+    predict_label = list(map(str, predict_label))
+    gold_label = list(map(str, gold_label))
     cm.add_list(predict_label, gold_label)
 
     if print_all:

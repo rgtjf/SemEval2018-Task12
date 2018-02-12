@@ -7,6 +7,7 @@ import random
 from stst import utils, config
 from stst import Feature
 
+
 class Model(object):
     def __init__(self,
                  model_name,
@@ -31,7 +32,6 @@ class Model(object):
 
         self.get_output_file = lambda train_file: '{}/{}/{}'.format(
             config.OUTPUT_DIR, self.model_name, os.path.basename(train_file))
-
 
     def add(self, feature):
         self.feature_list.append(feature)
@@ -81,6 +81,12 @@ class Model(object):
         f_out = utils.create_write_file(self.output_file)
         for label, dev_instance in zip(predict_label, dev_instances):
             print('{:d}\t#\t{}'.format(label, dev_instance.get_instance_string()), file=f_out)
+
+        submit_file = self.output_file.replace('.txt', '.submit')
+        f_out = utils.create_write_file(submit_file)
+        print('#id	correctLabelW0orW1', file=f_out)
+        for label, dev_instance in zip(predict_label, dev_instances):
+            print('{}\t{}'.format(dev_instance.get_id(), label), file=f_out)
 
         return predict_label
 

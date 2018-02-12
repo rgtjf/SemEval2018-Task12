@@ -1,26 +1,22 @@
 # coding: utf8
-
-"""
-@author: rgtjf
-@file: task.py
-@time: 2017/10/23 13:38
-"""
-
 from __future__ import print_function
 
 import codecs
 import json
 import re
 import traceback
-
+import os
 import pyprind
+import sys
+sys.path.append('..')
 
 import stst
+import config
 from nlplibs import corenlp_utils
 from stst import utils
 from stst.dict_utils import DictLoader
-from data.example import Example
-from data.example import ParseExample
+from input.example import Example
+from input.example import ParseExample
 
 def preprocess(sent):
     """
@@ -42,6 +38,15 @@ def preprocess(sent):
     sent = sent.replace(u"/", " ")
     sent = r1.sub(r'\1', sent)
     sent = r2.sub(r'$\1', sent)
+
+    pairs = [('alwayst', 'always'), ('paretnt', 'parent'),
+             ('financiall', 'financial'), # ("'s", "is"),
+             ('candidante', 'candidate'), ('vaildate', 'validate'),
+             ('locaiton', 'location'), ('sufficience', 'sufficiency'),
+             ('enrol', 'enroll')]
+    for pair in pairs:
+        sent = re.sub(r'\b%s\b' % pair[0], pair[1], sent)
+    pass
     return sent
 
 
@@ -71,6 +76,29 @@ def calc_avg_tokens(train_instances):
     print(sum(info) / len(info))
 
 
+def load_data(file_path):
+    """ return list of examples """
+    examples = []
+    with codecs.open(file_path, encoding='utf8') as f:
+        # id	warrant0	warrant1	correctLabelW0orW1	reason	claim	debateTitle	debateInfo
+        headline = f.readline()
+        for line in f:
+            example_dict = {}
+            items = line.strip().split('\t')
+            example_dict['id'] = items[0]
+            example_dict['warrant0'] = preprocess(items[1])
+            example_dict['warrant1'] = preprocess(items[2])
+            example_dict['label'] = int(items[3])
+            example_dict['reason'] = preprocess(items[4])
+            example_dict['claim'] = preprocess(items[5])
+            example_dict['title'] = preprocess(items[6])
+            example_dict['info'] = preprocess(items[7])
+            example_dict['debate'] = preprocess(items[6] + ' ' + items[7])
+            example_dict['negclaim'] = preprocess(config.claim_dict[items[5]])
+            examples.append(example_dict)
+    return examples
+
+
 def load_parse_data(file_path, init=False):
     """
     Load data after Parse, like POS, NER, etc.
@@ -84,35 +112,35 @@ def load_parse_data(file_path, init=False):
     """
 
     ''' Pre-Define Write File '''
-    parse_train_file = file_path.replace('data', 'generate/parse')
-    parse_word_file = file_path.replace('data', 'generate/word')
-    parse_lemma_file = file_path.replace('data', 'generate/lemma')
-    parse_stopwords_lemma_file = file_path.replace('data', 'generate/stopwords/lemma')
+    parse_train_file = file_path.replace('data/', 'generate/parse/')
+    parse_word_file = file_path.replace('data/', 'generate/word/')
+    parse_lemma_file = file_path.replace('data/', 'generate/lemma/')
+    parse_stopwords_lemma_file = file_path.replace('data/', 'generate/stopwords/lemma/')
 
-    if init:
+    if init or not os.path.exists(parse_train_file):
 
+        ''' Define CoreNLP'''
         nlp = corenlp_utils.StanfordNLP(server_url='http://localhost:9000')
 
-        print(file_path)
-        ''' Parse Data '''
-        examples = Example.load_data(file_path)
+        ''' Read data '''
+        print("Read Data from file: %s" % file_path)
+        examples = load_data(file_path)
 
+        ''' Parse data '''
         print('*' * 50)
-        print("Parse Data, file_path=%s, n_line=%d\n" % (file_path, len(examples)))
-
-        # idx = 0
+        print("Parse Data to file: %s, n_line: %d\n" % (parse_train_file, len(examples)))
         parse_data = []
         process_bar = pyprind.ProgPercent(len(examples))
         for example in examples:
             process_bar.update()
-
-            id = example.get_id()
-            label = example.get_label()
+            id = example['id']
+            label = example['label']
             parse_lst = [id, label]
             try:
-                # warrant0 / warrant1 / reason / claim / title / info
-                example_lst = example.get_six()
-
+                # warrant0 / warrant1 / reason / claim / debate / negclaim
+                example_lst = [example['warrant0'], example['warrant1'], example['reason'],
+                               example['claim'], example['debate'], example['negclaim'],
+                               example['title'], example['info']]
                 for sent in example_lst:
                     parse_sent = nlp.parse(sent)
                     parse_lst.append(sent)
@@ -140,24 +168,16 @@ def load_parse_data(file_path, init=False):
             label = parse_example.get_label()
 
             for word_type, fw in zip(['word', 'lemma'], [f_word, f_lemma]):
-
-                warrant0 = parse_example.get_warrant0(type=word_type, return_str=True)
-                warrant1 = parse_example.get_warrant1(type=word_type, return_str=True)
-                reason = parse_example.get_reason(type=word_type, return_str=True)
-                claim = parse_example.get_claim(type=word_type, return_str=True)
-                title = parse_example.get_title(type=word_type, return_str=True)
-                info = parse_example.get_info(type=word_type, return_str=True)
+                warrant0, warrant1, reason, claim, debate, negclaim = parse_example.get_six(
+                        return_str=True, type=word_type)
                 sent = '%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s' % (id, warrant0, warrant1,
-                                                           label, reason, claim, title, info)
+                                                           label, reason, claim, debate, negclaim)
                 print(sent, file=fw)
 
-            warrant0 = parse_example.get_warrant0(type='lemma', stopwords=True, return_str=True)
-            warrant1 = parse_example.get_warrant1(type='lemma', stopwords=True, return_str=True)
-            reason = parse_example.get_reason(type='lemma', stopwords=True, return_str=True)
-            claim = parse_example.get_claim(type='lemma', stopwords=True, return_str=True)
-            title = parse_example.get_title(type='lemma', stopwords=True, return_str=True)
-            info = parse_example.get_info(type='lemma', stopwords=True, return_str=True)
-            sent = '%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s' % (id, warrant0, warrant1, label, reason, claim, title, info)
+            warrant0, warrant1, reason, claim, debate, negclaim = parse_example.get_six(
+                    return_str=True, type='lemma', stopwords=True)
+            sent = '%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s' % (id, warrant0, warrant1, label, reason,
+                                                       claim, debate, negclaim)
             print(sent, file=f_stopwords_lemma)
 
             print(parse_sent, file=f_parse)
@@ -183,17 +203,23 @@ def load_parse_data(file_path, init=False):
 
 
 if __name__ == '__main__':
+    ROOT_DIR = '../../data'
     print('Train')
-    train_file = '../data/train-full.txt'
+    train_file = ROOT_DIR + '/train-full.txt'
     train_instances = Example.load_data(train_file)
     calc_avg_tokens(train_instances)
 
     print('Dev')
-    dev_file = '../data/dev-full.txt'
+    dev_file = ROOT_DIR + '/dev-full.txt'
     dev_instances = Example.load_data(dev_file)
     calc_avg_tokens(dev_instances)
 
-    train_swap_file = '../data/train-w-swap-full.txt'
+    print('Test')
+    test_file = ROOT_DIR + '/test-full-tmp.txt'
+    test_instances = Example.load_data(test_file)
+    calc_avg_tokens(test_instances)
+
+    train_swap_file = ROOT_DIR + '/train-w-swap-full.txt'
     train_instances = Example.load_data(train_swap_file)
 
     print(len(train_instances))
@@ -203,8 +229,11 @@ if __name__ == '__main__':
         print(train_instance.get_instance_string())
 
     train_instances = load_parse_data(train_swap_file, init=True)
-    train_instance = load_parse_data(train_file, init=True)
+    test_instances = load_parse_data(test_file, init=True)
     dev_instances = load_parse_data(dev_file, init=True)
+
+    # train_instance = load_parse_data(train_file, init=True)
+    # train_instance = load_parse_data(train_file, init=True)
 
     # for idx in range(len(train_instances)):
     #     print(idx, end=',')

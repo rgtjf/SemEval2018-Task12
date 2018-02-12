@@ -1,11 +1,4 @@
 # coding: utf8
-
-"""
-@author: rgtjf
-@file: basic_feature.py
-@time: 2017/11/6 16:51
-"""
-
 from __future__ import print_function
 
 from stst import Feature

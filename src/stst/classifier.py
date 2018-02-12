@@ -2,6 +2,8 @@
 from __future__ import print_function
 
 import pickle
+from collections import Counter
+
 from numpy import shape
 import numpy as np
 import os
@@ -23,7 +25,8 @@ __all__ = [
     "AverageEnsemble",
     "LIB_LINEAR_LR",
     "skLearn_svm",
-    "XGBOOST"
+    "XGBOOST",
+    "VoteEnsemble"
 ]
 
 
@@ -34,8 +37,8 @@ class Strategy(object):
     def test_model(self, test_file_path, model_path, result_file_path):
         return None
 
-    def load_file(self, file_path):
-        data = load_svmlight_file(file_path)
+    def load_file(self, file_path, n_features=None):
+        data = load_svmlight_file(file_path, n_features)
         return data[0], data[1]
 
 
@@ -393,6 +396,35 @@ class XGBOOST_prob(Strategy):
         with open(result_file_path + '.pkl', 'wb') as f:
             pickle.dump(y_probs, f)
         y_pred = np.argmax(y_probs, axis=1)
+
+        print("==> Save the result ...")
+        with utils.create_write_file(result_file_path) as f:
+            for y in y_pred:
+                print(y, file=f)
+        return y_pred
+
+
+class VoteEnsemble(Strategy):
+    def __init__(self):
+        self.trainer = "Vote Ensemble"
+        print("Using %s Classifier" % (self.trainer))
+
+    def train_model(self, train_file_path, model_path):
+        pass
+
+    def test_model(self, test_file_path, model_path, result_file_path):
+        print("==> Load the data ...")
+        X_test, Y_test = self.load_file(test_file_path)
+        print(test_file_path, shape(X_test))
+        X_test = X_test.toarray()
+        X_test = np.array(X_test, dtype=np.int32)
+
+        print("==> Test the model ...")
+        y_pred = []
+        for x in X_test:
+            counter = Counter(x)
+            topk = counter.most_common(1)  # [(dict, freq)]
+            y_pred.append(topk[0][0])
 
         print("==> Save the result ...")
         with utils.create_write_file(result_file_path) as f:

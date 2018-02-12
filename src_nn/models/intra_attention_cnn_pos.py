@@ -10,7 +10,7 @@ from attention_lstm import AttBasicLSTMCell
 from attention_lstm import AttGRUCell
 
 
-class IntraAttentionIIModel(object):
+class IntraAttentionCNNModel(object):
 
     def __init__(self, FLAGS=None):
         self.FLAGS = FLAGS
@@ -50,6 +50,32 @@ class IntraAttentionIIModel(object):
         self.diff_warrant0_len = tf.placeholder(tf.int32, (None,), name='diff_warrant0_len')  # [batch_size,]
         self.diff_warrant1_len = tf.placeholder(tf.int32, (None,), name='diff_warrant1_len')  # [batch_size,]
 
+        if FLAGS.with_pos:
+            self.input_pos_warrant0 = tf.placeholder(tf.int32, (None, self.seq_len), name='pos_warrant0')
+            self.input_pos_warrant1 = tf.placeholder(tf.int32, (None, self.seq_len), name='pos_warrant1')
+            self.input_pos_reason = tf.placeholder(tf.int32, (None, self.seq_len), name='pos_reason')
+            self.input_pos_claim = tf.placeholder(tf.int32, (None, self.seq_len), name='pos_claim')
+            self.input_pos_debate = tf.placeholder(tf.int32, (None, self.seq_len), name='pos_debate')
+            self.input_diff_pos_warrant0 = tf.placeholder(tf.int32, (None, self.diff_len), name='diff_pos_warrant0')
+            self.input_diff_pos_warrant1 = tf.placeholder(tf.int32, (None, self.diff_len), name='diff_pos_warrant1')
+            self.pos_embed = None
+
+        if FLAGS.with_char:
+            self.input_char_warrant0 = tf.placeholder(tf.int32, (None, self.seq_len), name='char_warrant0')
+            self.input_char_warrant1 = tf.placeholder(tf.int32, (None, self.seq_len), name='char_warrant1')
+            self.input_char_reason = tf.placeholder(tf.int32, (None, self.seq_len), name='char_reason')
+            self.input_char_claim = tf.placeholder(tf.int32, (None, self.seq_len), name='char_claim')
+            self.input_char_debate = tf.placeholder(tf.int32, (None, self.seq_len), name='char_debate')
+            self.input_diff_char_warrant0 = tf.placeholder(tf.int32, (None, self.diff_len), name='diff_char_warrant0')
+            self.input_diff_char_warrant1 = tf.placeholder(tf.int32, (None, self.diff_len), name='diff_char_warrant1')
+            self.char_warrant0_len = tf.placeholder(tf.int32, (None, ), name='char_warrant0_len')
+            self.char_warrant1_len = tf.placeholder(tf.int32, (None, ), name='char_warrant1_len')
+            self.char_reason_len = tf.placeholder(tf.int32, (None, ), name='char_reason_len')
+            self.char_claim_len = tf.placeholder(tf.int32, (None, ), name='char_claim_len')
+            self.char_debate_len = tf.placeholder(tf.int32, (None, ), name='char_debate_len')
+            self.diff_char_warrant0_len = tf.placeholder(tf.int32, (None, ), name='diff_char_warrant0_len')
+            self.diff_char_warrant1_len = tf.placeholder(tf.int32, (None, ), name='diff_char_warrant1_len')
+
         # now define embedded layers of the input
         embedded_warrant0 =  tf.nn.embedding_lookup(self.we, self.input_warrant0)
         embedded_warrant1 =  tf.nn.embedding_lookup(self.we, self.input_warrant1)
@@ -60,7 +86,7 @@ class IntraAttentionIIModel(object):
         embedded_diff_warrant0 = tf.nn.embedding_lookup(self.we, self.input_diff_warrant0)
         embedded_diff_warrant1 = tf.nn.embedding_lookup(self.we, self.input_diff_warrant1)
 
-        def conv_ngram(input_x, filter_sizes=(1, 2), num_filters=32):
+        def conv_ngram(input_x, filter_sizes=(1, 2, 3), num_filters=32):
             """
             Conv ngram
             """
@@ -75,10 +101,20 @@ class IntraAttentionIIModel(object):
                     b = tf.get_variable("b", [num_filters], initializer=tf.constant_initializer(0.0))
                     conv = tf.nn.conv2d(input_x, W, strides=[1, 1, embed_size, 1], padding='SAME', name="conv")
                     h = tf.nn.relu(tf.nn.bias_add(conv, b), name="relu")
+                    h = tf.squeeze(h, axis=2)
                     outputs.append(h)
             outputs = tf.concat(outputs, axis=2)
             return outputs
 
+        with tf.variable_scope("conv") as s:
+            conv_warrant0 = conv_ngram(embedded_warrant0)
+            s.reuse_variables()
+            conv_warrant1 = conv_ngram(embedded_warrant1)
+            conv_reason = conv_ngram(embedded_reason)
+            conv_claim = conv_ngram(embedded_claim)
+            conv_debate = conv_ngram(embedded_debate)
+            conv_diff_warrant0 = conv_ngram(embedded_diff_warrant0)
+            conv_diff_warrant1 = conv_ngram(embedded_diff_warrant1)
 
         def AttBiLSTM(attention_vector, input_x, input_x_len, hidden_size, rnn_type='lstm', return_sequence=True):
             """
@@ -108,21 +144,21 @@ class IntraAttentionIIModel(object):
                     raise NotImplementedError
             return outputs
 
-        pooling_diff_warrant0 = tf_utils.AvgPooling(embedded_diff_warrant0, self.diff_warrant0_len)
-        pooling_diff_warrant1 = tf_utils.AvgPooling(embedded_diff_warrant1, self.diff_warrant1_len)
+        pooling_diff_warrant0 = tf_utils.MaxPooling(conv_diff_warrant0, self.diff_warrant0_len)
+        pooling_diff_warrant1 = tf_utils.MaxPooling(conv_diff_warrant1, self.diff_warrant1_len)
 
         with tf.variable_scope("att_warrant_lstm") as s:
-            bilstm_warrant0 = AttBiLSTM(pooling_diff_warrant0, embedded_warrant0, self.warrant0_len, self.lstm_size,
+            bilstm_warrant0 = AttBiLSTM(pooling_diff_warrant0, conv_warrant0, self.warrant0_len, self.lstm_size,
                                         rnn_type=FLAGS.rnn_type)
             s.reuse_variables()
-            bilstm_warrant1 = AttBiLSTM(pooling_diff_warrant1, embedded_warrant1, self.warrant1_len, self.lstm_size,
+            bilstm_warrant1 = AttBiLSTM(pooling_diff_warrant1, conv_warrant1, self.warrant1_len, self.lstm_size,
                                         rnn_type=FLAGS.rnn_type)
 
         with tf.variable_scope("bi_lstm") as s:
-            bilstm_reason = tf_utils.BiLSTM(embedded_reason, self.reason_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_reason = tf_utils.BiLSTM(conv_reason, self.reason_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
             s.reuse_variables()
-            bilstm_claim = tf_utils.BiLSTM(embedded_claim, self.claim_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
-            bilstm_debate = tf_utils.BiLSTM(embedded_debate, self.debate_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_claim = tf_utils.BiLSTM(conv_claim, self.claim_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
+            bilstm_debate = tf_utils.BiLSTM(conv_debate, self.debate_len, self.lstm_size, rnn_type=FLAGS.rnn_type)
 
         with tf.variable_scope("pooling") as s:
             ''' Pooling Layer '''
@@ -148,8 +184,8 @@ class IntraAttentionIIModel(object):
         self.attention_warrant1 = attention_warrant1
 
         # concatenate them
-        # merge_warrant = tf.concat([attention_warrant0, attention_warrant1, pooling_diff_warrant0, pooling_diff_warrant1], axis=-1)
-        merge_warrant = tf.concat([attention_warrant0, attention_warrant1,
+        merge_warrant = tf.concat([pooling_reason * pooling_claim,
+                                   attention_warrant0, attention_warrant1,
                                    attention_warrant0 - attention_warrant1,
                                    attention_warrant0 * attention_warrant1], axis=-1)
         dropout_warrant = tf.nn.dropout(merge_warrant, self.drop_keep_rate)
@@ -196,9 +232,35 @@ class IntraAttentionIIModel(object):
             self.diff_warrant1_len: batch.diff_warrant1_len,
 
             self.target_label : batch.label,
-            self.drop_keep_rate: self.FLAGS.drop_keep_rate,
-            self.learning_rate: self.FLAGS.learning_rate,
+            self.drop_keep_rate : self.FLAGS.dropout_keep_rate,
+            self.learning_rate : self.FLAGS.learning_rate,
         }
+
+        if self.FLAGS.with_pos:
+            feed_dict[self.input_pos_warrant0] = batch.pos_warrant0
+            feed_dict[self.input_pos_warrant1] = batch.pos_warrant1
+            feed_dict[self.input_pos_reason] = batch.pos_reason
+            feed_dict[self.input_pos_claim] = batch.pos_claim
+            feed_dict[self.input_pos_debate] = batch.pos_debate
+            feed_dict[self.input_diff_pos_warrant0] = batch.diff_pos_warrant0
+            feed_dict[self.input_diff_pos_warrant1] = batch.diff_pos_warrant1
+
+        if self.FLAGS.with_char:
+            feed_dict[self.input_char_warrant0] = batch.char_warrant0
+            feed_dict[self.input_char_warrant1] = batch.char_warrant1
+            feed_dict[self.input_char_reason] = batch.char_reason
+            feed_dict[self.input_char_claim] = batch.char_claim
+            feed_dict[self.input_char_debate] = batch.char_debate
+            feed_dict[self.input_diff_char_warrant0] = batch.diff_char_warrant0
+            feed_dict[self.input_diff_char_warrant1] = batch.diff_char_warrant1
+            feed_dict[self.char_warrant0_len] = batch.char_warrant0
+            feed_dict[self.char_warrant1_len] = batch.char_warrant1
+            feed_dict[self.char_reason_len] = batch.char_reason
+            feed_dict[self.char_claim_len] = batch.char_claim
+            feed_dict[self.char_debate_len] = batch.char_debate
+            feed_dict[self.diff_char_warrant0_len] = batch.diff_char_warrant0
+            feed_dict[self.diff_char_warrant1_len] = batch.diff_char_warrant1
+
         to_return = {
             'train_op': self.train_op,
             'loss': self.loss,

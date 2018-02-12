@@ -44,8 +44,8 @@ class IntraAttentionModel(object):
         self.learning_rate = tf.placeholder(tf.float32)
 
         # now define embedded layers of the input
-        embedded_warrant0 =  tf.nn.embedding_lookup(self.we, self.input_warrant0)
-        embedded_warrant1 =  tf.nn.embedding_lookup(self.we, self.input_warrant1)
+        embedded_warrant0 = tf.nn.embedding_lookup(self.we, self.input_warrant0)
+        embedded_warrant1 = tf.nn.embedding_lookup(self.we, self.input_warrant1)
         embedded_reason = tf.nn.embedding_lookup(self.we, self.input_reason)
         embedded_claim = tf.nn.embedding_lookup(self.we, self.input_claim)
         embedded_debate = tf.nn.embedding_lookup(self.we, self.input_debate)
@@ -170,14 +170,9 @@ class IntraAttentionModel(object):
             self.claim_len : batch.claim_len,
             self.debate_len : batch.debate_len,
 
-            self.diff_warrant0 : batch.diff_warrant0,
-            self.diff_warrant1 : batch.diff_warrant1,
-            self.diff_warrant0_len: batch.diff_warrant0_len,
-            self.diff_warrant1_len: batch.diff_warrant1_len,
-
             self.target_label : batch.label,
-            self.drop_keep_rate : 0.9,
-            self.learning_rate : 1e-3,
+            self.drop_keep_rate: self.FLAGS.drop_keep_rate,
+            self.learning_rate: self.FLAGS.learning_rate,
         }
         to_return = {
             'train_op': self.train_op,
@@ -198,12 +193,13 @@ class IntraAttentionModel(object):
             self.reason_len: batch.reason_len,
             self.claim_len: batch.claim_len,
             self.debate_len: batch.debate_len,
+
+            self.target_label: batch.label,
             self.drop_keep_rate: 1.0
         }
         to_return = {
             'predict_label': self.predict_label,
             'predict_prob': self.predict_prob,
-            'attention_warrant0': self.attention_warrant0,
-
+            'loss': self.loss
         }
         return sess.run(to_return, feed_dict)
