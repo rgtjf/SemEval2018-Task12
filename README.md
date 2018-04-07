@@ -1,6 +1,6 @@
 # SemEval2018-Task12
 
-This is the code by ECNU team submitted to SemEval2018 Task12:  The Argument Reasoning Comprehension Task.
+This is the code by ECNU team submitted to SemEval-2018 Task12:  The Argument Reasoning Comprehension Task.
 
 
 ## Reference
